@@ -1,0 +1,22 @@
+[package]
+name = "proxyswarm"
+version = "0.1.0"
+authors = ["Jorge Alejandro Jimenez Luna <jorgeajimenezl17@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+strip = "debuginfo"
+lto = true
+# opt-level = "z"
+
+[dependencies]
+clap = "2.33.3"
+md5 = "0.7.0"
+bytes = "1.0.1"
+configparser = "3.0.0"
+log4rs = "1.0.0"
+log = "0.4.16"
+hyper = { version = "0.14.18", features = ["full"] }
+tokio = { version = "1", features = ["full"] }

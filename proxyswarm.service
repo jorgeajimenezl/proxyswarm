@@ -1,0 +1,8 @@
+[Unit]
+Description=Lightweight proxy that allows redirect TCP traffic through a another proxy
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/proxyswarm --test-file --file /etc/proxyswarm.conf
+ExecStart=/usr/bin/proxyswarm -file /etc/proxyswarm.conf
