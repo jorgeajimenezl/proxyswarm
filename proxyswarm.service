@@ -1,5 +1,5 @@
 [Unit]
-Description=Lightweight proxy that allows redirect TCP traffic through a another proxy
+Description=Lightweight proxy that allows redirect HTTP(S) traffic through a proxy.
 After=network.target
 
 [Service]
