@@ -1,4 +1,6 @@
 # Proxyswarm
+[![Rust](https://github.com/jorgeajimenezl/proxyswarm/actions/workflows/rust.yml/badge.svg)](https://github.com/jorgeajimenezl/proxyswarm/actions/workflows/rust.yml)
+
 Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.
 
 WARNING: This app isn't recomended for download large files, for these things use apps like [curl](#How-donwload-a-file-with-curl-using-proxy), wget or other download programs. For web browse use standard web browser like Chromium and Firefox, these apps and others have good proxy support. **USE THIS APP WITH PROGRAMS WITHOUT PROXY SUPPORT LIKE STEAM, PIP, ETC**
