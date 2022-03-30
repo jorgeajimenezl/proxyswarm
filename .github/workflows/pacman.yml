@@ -11,28 +11,29 @@ jobs:
     runs-on: ubuntu-latest
 
     container:
-      image: archlinux
+      image: archlinux:base-devel
 
     steps:
     - name: Install rust
       run: |
-        useradd -m build
         pacman -Syu --noconfirm
-        pacman -S base-devel rustup git --noconfirm
+        pacman -Sy git rustup --noconfirm
         rustup default stable
-        echo "build ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/build
-
-        cd /home/build
 
     - uses: actions/checkout@v3
 
     - name: Build pacman package
       run: |
+        chgrp -R nobody .
+        chmod -R g+ws .
+        setfacl -R -m u::rwx,g::rwx .
+        setfacl -R -d --set u::rwx,g::rwx,o::- .
+
         cd build
-        sudo -u build makepkg --noconfirm
+        sudo -u nobody makepkg --noconfirm
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
       with:
         name: proxyswarm-x86_64-pacman-package
-        path: build/*.zst
+        path: "*.zst"
