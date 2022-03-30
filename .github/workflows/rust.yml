@@ -9,12 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-strategy:
-  matrix:
-    os: [ubuntu-latest, windows-latest, macos-latest]
-
 jobs:
-  build-ubuntu:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v3
