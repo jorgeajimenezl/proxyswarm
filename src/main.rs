@@ -26,8 +26,8 @@ use hyper::{
 
 use configparser::ini::Ini;
 use std::convert::Infallible;
-use std::str::FromStr;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use log::{debug, error, info, trace, LevelFilter};
@@ -40,6 +40,7 @@ use log4rs::{
 
 #[derive(Clone, Debug)]
 struct AppContext {
+	pub addr: SocketAddr,
 	pub proxies: Vec<Proxy>,
 	pub bypass: Vec<String>,
 }
@@ -135,15 +136,11 @@ fn main() {
 
 fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 	// Create empty context
-	let mut context = AppContext {
-		proxies: Vec::new(),
-		bypass: Vec::new(),
-	};
+	let mut proxies = Vec::new();
+	let mut bypass = Vec::new();
 
-	if let Some(v) = config.get("General", "bypass") {
-		context
-			.bypass
-			.extend(v.split(",").map(|x| String::from(x)));
+	if let Some(v) = config.get("general", "bypass") {
+		bypass.extend(v.split(",").map(|x| String::from(x)));
 	}
 
 	// Get the proxies
@@ -179,10 +176,27 @@ fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 			},
 		};
 
-		context.proxies.push(proxy);
+		proxies.push(proxy);
 	}
 
-	Ok(context)
+	let listen_addr = SocketAddr::new(
+		config
+			.get("general", "bind-address")
+			.unwrap_or(String::from("0.0.0.0"))
+			.parse()
+			.map_err(|e| format!("Error parsing address interface to bind the app: {}", e))?,
+		config
+			.get("general", "bind-port")
+			.unwrap_or(String::from("3128"))
+			.parse::<u16>()
+			.map_err(|e| format!("Error parsing port to bind the app: {}", e))?,
+	);
+
+	Ok(AppContext {
+		addr: listen_addr,
+		proxies: proxies,
+		bypass: bypass,
+	})
 }
 
 async fn handle_connection(
@@ -193,13 +207,12 @@ async fn handle_connection(
 ) -> Result<Response<Body>, Infallible> {
 	// Get connections count
 	let mut c = count.lock().await;
-	let id = *c;	
+	let id = *c;
 	*c += 1;
 	drop(c);
 	drop(count);
 
 	debug!("[#{}] Incoming connection: {}", id, addr);
-	
 	debug!("[#{}] Requested: {}", id, req.uri());
 	trace!("[#{}] Request struct: {:?}", id, req);
 
@@ -227,19 +240,23 @@ async fn handle_connection(
 
 #[tokio::main]
 async fn do_work(context: AppContext) {
-	let addr = SocketAddr::from(([127, 0, 0, 1], 3128));
+	let addr = context.addr.clone();
 	let count = Arc::new(Mutex::new(0));
 
 	let make_service = make_service_fn(move |conn: &AddrStream| {
 		let count = count.clone();
 		let context = context.clone();
 		let addr = conn.remote_addr();
-		let service = service_fn(move |req| handle_connection(context.clone(), addr, count.clone(), req));
+		let service =
+			service_fn(move |req| handle_connection(context.clone(), addr, count.clone(), req));
 
-		async move { Ok::<_, Infallible>(service) }	
+		async move { Ok::<_, Infallible>(service) }
 	});
 	let server = Server::bind(&addr).serve(make_service);
-	info!("Proxy listening at http://{}. Press Ctrl+C to stop it", addr);
+	info!(
+		"Proxy listening at http://{}. Press Ctrl+C to stop it",
+		addr
+	);
 
 	// Prepare some signal for when the server should start shutting down...
 	let graceful = server.with_graceful_shutdown(async {
