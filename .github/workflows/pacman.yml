@@ -2,7 +2,9 @@ name: Build Pacman Package
 
 on:
   push:
-    branches: [ main ]
+   tags:
+    - "v*"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,8 +17,8 @@ jobs:
     - name: Install rust
       run: |
         pacman -Syyu --noconfirm
-        pacman -S base-devel
-        pacman -S rustup
+        pacman -S base-devel --noconfirm
+        pacman -S rustup --noconfirm
         rustup default stable
 
     - uses: actions/checkout@v3
