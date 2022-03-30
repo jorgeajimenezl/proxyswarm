@@ -1,6 +1,3 @@
-use std::fs::File;
-use std::io::prelude::*;
-
 static BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 pub fn encode_base64_len(n: usize) -> usize {
@@ -51,18 +48,18 @@ pub fn split_once<'a>(s: &'a str, pattern: &str) -> Option<(&'a str, &'a str)> {
     Some((&s[..n], &s[n + pattern.len()..]))
 }
 
-fn get_rand_int(range: u32) -> u32 {
-    let mut file = File::open("/dev/urandom").unwrap();
-    let mut buff: [u8; 4] = [0, 0, 0, 0];
-    file.read_exact(&mut buff).unwrap();
-    return u32::from_be_bytes(buff) % range;
-}
+// fn get_rand_int(range: u32) -> u32 {
+//     let mut file = File::open("/dev/urandom").unwrap();
+//     let mut buff: [u8; 4] = [0, 0, 0, 0];
+//     file.read_exact(&mut buff).unwrap();
+//     return u32::from_be_bytes(buff) % range;
+// }
 
 fn generate_rand(buff: &mut [u8]) {
     let mut n = buff.len();
     let mut p: usize = 0;
     while n > 0 {
-        let mut r = get_rand_int(0xFFFFFFFF);
+        let mut r = rand::random::<u32>();
         let mut left = if n < 4 { n } else { 4 };
         while left > 0 {
             buff[p] = (r & 0xFF) as u8;
