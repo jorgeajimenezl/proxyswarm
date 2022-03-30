@@ -56,7 +56,7 @@ macro_rules! try_or_error {
 	};
 }
 
-fn main() -> Result<(), ()> {
+fn main() {
 	let matches = App::new("proxyswarm")
 						.version("0.1.0")
 						.author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
@@ -104,7 +104,7 @@ fn main() -> Result<(), ()> {
 
 	if let Err(e) = log4rs::init_config(log_config) {
 		error!("Error initializing logger: {}", e);
-		return Err(());
+		std::process::exit(1);
 	}
 
 	info!("Application started");
@@ -113,7 +113,7 @@ fn main() -> Result<(), ()> {
 	let mut config = Ini::new();
 	if let Err(e) = config.load(matches.value_of("file").unwrap()) {
 		error!("Error loading configuration file: {}", e);
-		return Err(());
+		std::process::exit(1);
 	}
 
 	// Main Logic
@@ -121,17 +121,16 @@ fn main() -> Result<(), ()> {
 		Ok(v) => v,
 		Err(e) => {
 			error!("Error parsing configuration file: {}", e);
-			return Err(());
+			std::process::exit(1);
 		}
 	};
 
 	if matches.is_present("test-file") {
 		info!("Conguration file analized");
-		return Err(());
+		std::process::exit(1);
 	}
 
 	do_work(context);
-	Ok(())
 }
 
 fn build_appcontext(config: &Ini) -> Result<AppContext, String> {

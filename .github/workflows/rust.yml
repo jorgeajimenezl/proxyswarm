@@ -3,8 +3,6 @@ name: Rust
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,7 +17,7 @@ jobs:
             extension: 
           - os: windows
             name: win32
-            extension: .exe
+            extension: ".exe"
           - os: macos
             name: macos
             extension: 
