@@ -14,7 +14,7 @@ use tokio::{self, net::TcpStream};
 #[derive(Clone)]
 pub struct ProxyClient {
     proxies: Vec<Proxy>,
-    baypass: Vec<String>,
+    bypass: Vec<String>,
 }
 
 use super::proxy::{add_authentication_headers, get_proxy_auth_info, Proxy, ProxyAuthentication};
@@ -28,26 +28,26 @@ impl ProxyClient {
     // pub fn new() -> Self {
     //     ProxyClient {
     //         proxies: Vec::new(),
-    //         baypass: Vec::new()
+    //         bypass: Vec::new()
     //     }
     // }
 
-    pub fn from_parts(proxies: Vec<Proxy>, baypass: Vec<String>) -> Self {
+    pub fn from_parts(proxies: Vec<Proxy>, bypass: Vec<String>) -> Self {
         ProxyClient {
             proxies: proxies,
-            baypass: baypass,
+            bypass: bypass,
         }
     }
 
     // pub fn from_proxy(proxy: Proxy) -> Self {
     //     ProxyClient {
     //         proxies: vec![proxy],
-    //         baypass: Vec::new()
+    //         bypass: Vec::new()
     //     }
     // }
 
-    // pub fn add_baypass_uri(&mut self, uri: &str) {
-    //     self.baypass.push(String::from(uri));
+    // pub fn add_bypass_uri(&mut self, uri: &str) {
+    //     self.bypass.push(String::from(uri));
     // }
 
     // pub fn add_proxy(&mut self, proxy: Proxy) {
@@ -59,7 +59,7 @@ impl ProxyClient {
     // }
 
     pub async fn request(&self, rid: u32, req: Request<Body>) -> Result<Response<Body>, Error> {
-        for host in self.baypass.iter() {
+        for host in self.bypass.iter() {
             if req.uri().host().unwrap_or_default() == host {
                 // TODO: FIX THIS
                 debug!(

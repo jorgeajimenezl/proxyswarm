@@ -41,7 +41,7 @@ use log4rs::{
 #[derive(Clone, Debug)]
 struct AppContext {
 	pub proxies: Vec<Proxy>,
-	pub baypass: Vec<String>,
+	pub bypass: Vec<String>,
 }
 
 macro_rules! try_or_error {
@@ -137,12 +137,12 @@ fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 	// Create empty context
 	let mut context = AppContext {
 		proxies: Vec::new(),
-		baypass: Vec::new(),
+		bypass: Vec::new(),
 	};
 
-	if let Some(v) = config.get("General", "baypass") {
+	if let Some(v) = config.get("General", "bypass") {
 		context
-			.baypass
+			.bypass
 			.extend(v.split(",").map(|x| String::from(x)));
 	}
 
@@ -212,7 +212,7 @@ async fn handle_connection(
 		.body(Body::empty())
 		.unwrap();
 
-	let client = ProxyClient::from_parts(context.proxies, context.baypass);
+	let client = ProxyClient::from_parts(context.proxies, context.bypass);
 
 	// Forward the request
 	let res = try_or_error!(

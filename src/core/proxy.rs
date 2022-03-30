@@ -163,7 +163,7 @@ pub fn get_proxy_auth_info(s: &str) -> ProxyAuthentication {
 // pub struct ProxyConnector<C> {
 //     connector: C,
 //     proxy: Uri,
-//     baypass: Vec<String>,
+//     bypass: Vec<String>,
 // }
 
 // impl<C> ProxyConnector<C> {
@@ -171,19 +171,19 @@ pub fn get_proxy_auth_info(s: &str) -> ProxyAuthentication {
 //         ProxyConnector {
 //             connector: connector,
 //             proxy: Uri::default(),
-//             baypass: Vec::new(),
+//             bypass: Vec::new(),
 //         }
 //     }
 //     pub fn from_proxy(connector: C, proxy: Uri) -> Self {
 //         ProxyConnector {
 //             connector: connector,
 //             proxy: proxy,
-//             baypass: Vec::new(),
+//             bypass: Vec::new(),
 //         }
 //     }
 
-//     pub fn add_baypass_uri(&mut self, uri: &str) {
-//         self.baypass.push(String::from(uri));
+//     pub fn add_bypass_uri(&mut self, uri: &str) {
+//         self.bypass.push(String::from(uri));
 //     }
 
 //     pub fn proxy(&self) -> &Uri {
@@ -216,7 +216,7 @@ pub fn get_proxy_auth_info(s: &str) -> ProxyAuthentication {
 //     }
 
 //     fn call(&mut self, uri: Uri) -> Self::Future {
-//         for host in self.baypass.iter() {
+//         for host in self.bypass.iter() {
 //             if uri.host().unwrap_or_default() == host {
 //                 return Box::pin(self.connector.call(uri).map_err(|err| io_err(err.into())));
 //             }
