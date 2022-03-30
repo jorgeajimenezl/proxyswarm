@@ -10,15 +10,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-ubuntu:
     runs-on: ubuntu-latest
-    
     steps:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose --release
-    - name: Archive binary
-        uses: actions/upload-artifact@v3
-        with:
-          name: proxyswarm
-          path: target/release/proxyswarm
+
+    - name: Archive binary file
+      uses: actions/upload-artifact@v3
+      with:
+        name: proxyswarm-x86_64-linux
+        path: target/release/proxyswarm
