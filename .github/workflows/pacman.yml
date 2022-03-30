@@ -25,13 +25,13 @@ jobs:
 
     - name: Build pacman package
       run: |
-        useradd --no-create-home --shell=/bin/false build && usermod -L build
-        echo "build ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-        echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+        chgrp nobody build
+        chmod g+ws build
+        setfacl -m u::rwx,g::rwx build
+        setfacl -d --set u::rwx,g::rwx,o::- build
 
-        su build
         cd build
-        makepkg
+        sudo -u nobody makepkg
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
