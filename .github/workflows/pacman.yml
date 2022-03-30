@@ -20,16 +20,16 @@ jobs:
         pacman -Syu --noconfirm
         pacman -S base-devel rustup git --noconfirm
         rustup default stable
+        echo "build ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/build
 
-        su build
         cd /home/build
-        
+
     - uses: actions/checkout@v3
 
     - name: Build pacman package
       run: |
         cd build
-        makepkg --noconfirm
+        sudo -u build makepkg --noconfirm
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
