@@ -1,0 +1,38 @@
+name: Build Pacman Package
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
+      image: archlinux
+
+    steps:
+    - name: Install rust
+      run: |
+        pacman -Syyu --noconfirm
+        pacman -S base-devel
+        pacman -S rustup
+        rustup default stable
+
+    - uses: actions/checkout@v3
+
+    - name: Build pacman package
+      run: |
+        useradd --no-create-home --shell=/bin/false build && usermod -L build
+        echo "build ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+        echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+        su build
+        cd build
+        makepkg
+
+    - name: Archive pacman package
+      uses: actions/upload-artifact@v3
+      with:
+        name: proxyswarm-x86_64-pacman-package
+        path: build/*.zst
