@@ -19,7 +19,7 @@ jobs:
             extension: 
           - os: windows
             name: win32
-            externsion: .exe
+            extension: .exe
           - os: macos
             name: macos
             extension: 
