@@ -59,7 +59,7 @@ macro_rules! try_or_error {
 
 fn main() {
 	let matches = App::new("proxyswarm")
-						.version("0.1.0")
+						.version("0.1.2")
 						.author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
 						.about("Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.")
 						.arg(Arg::with_name("verbosity")
@@ -121,7 +121,7 @@ fn main() {
 	let context = match build_appcontext(&config) {
 		Ok(v) => v,
 		Err(e) => {
-			error!("Error parsing configuration file: {}", e);
+			error!("{}", e);
 			std::process::exit(1);
 		}
 	};
