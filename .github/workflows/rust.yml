@@ -13,8 +13,19 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu
+            name: linux
+            extension: 
+          - os: windows
+            name: win32
+            externsion: .exe
+          - os: macos
+            name: macos
+            extension: 
+
+
+    runs-on: ${{ matrix.os }}-latest
     steps:
     - uses: actions/checkout@v3
     - name: Build
@@ -23,5 +34,5 @@ jobs:
     - name: Archive binary file
       uses: actions/upload-artifact@v3
       with:
-        name: proxyswarm-x86_64-linux
-        path: target/release/proxyswarm
+        name: proxyswarm-x86_64-${{ matrix.name }}
+        path: target/release/proxyswarm${{ matrix.extension }}
