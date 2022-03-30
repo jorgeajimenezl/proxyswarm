@@ -18,7 +18,7 @@ jobs:
       run: |
         pacman -Syyu --noconfirm
         pacman -S base-devel --noconfirm
-        pacman -S rustup --noconfirm
+        pacman -S rustup git --noconfirm
         rustup default stable
 
     - uses: actions/checkout@v3
