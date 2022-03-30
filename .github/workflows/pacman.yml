@@ -16,22 +16,20 @@ jobs:
     steps:
     - name: Install rust
       run: |
-        pacman -Syyu --noconfirm
-        pacman -S base-devel --noconfirm
-        pacman -S rustup git --noconfirm
+        useradd -m build
+        pacman -Syu --noconfirm
+        pacman -S base-devel rustup git --noconfirm
         rustup default stable
 
+        su build
+        cd /home/build
+        
     - uses: actions/checkout@v3
 
     - name: Build pacman package
       run: |
-        chgrp nobody build
-        chmod g+ws build
-        setfacl -m u::rwx,g::rwx build
-        setfacl -d --set u::rwx,g::rwx,o::- build
-
         cd build
-        sudo -u nobody makepkg --noconfirm
+        makepkg --noconfirm
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
