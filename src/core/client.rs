@@ -1,8 +1,11 @@
 // WARNING: IMPLEMENT POOL
-// use futures::future::poll_fn;
 use hyper::{
     self,
-    client::{conn::Builder, connect::HttpConnector, Client},
+    client::{
+        conn::{Builder, Connection},
+        connect::HttpConnector,
+        Client,
+    },
     header::{HOST, PROXY_AUTHENTICATE},
     service::Service,
     Body, Method, Request, Response, StatusCode,
@@ -22,6 +25,38 @@ use super::proxy::{add_authentication_headers, get_proxy_auth_info, Proxy, Proxy
 #[inline]
 fn io_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
     Error::new(ErrorKind::Other, e)
+}
+
+async fn tunnel(id: u32, connection: Connection<TcpStream, Body>, req: Request<Body>) {
+    let parts = match connection.without_shutdown().await {
+        Ok(v) => v,
+        Err(e) => {
+            error!("[#{}] Unable to get underline stream: {}", id, e);
+            return;
+        }
+    };
+    let mut io = parts.io;
+
+    match hyper::upgrade::on(req).await {
+        Ok(mut upgraded) => {
+            // Proxying data
+            let (from_client, from_server) =
+                match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("[#{}] Server io error: {}", id, e);
+                        return;
+                    }
+                };
+
+            // Print message when done
+            debug!(
+                "[#{}] Client wrote {} bytes and received {} bytes",
+                id, from_client, from_server
+            );
+        }
+        Err(e) => warn!("Upgrade error: {}", e),
+    }
 }
 
 impl ProxyClient {
@@ -59,21 +94,62 @@ impl ProxyClient {
     // }
 
     pub async fn request(&self, rid: u32, req: Request<Body>) -> Result<Response<Body>, Error> {
+        let mut connector = HttpConnector::new();
+        connector.set_nodelay(true);
         for host in self.bypass.iter() {
             if req.uri().host().unwrap_or_default() == host {
                 // TODO: FIX THIS
                 debug!(
-                    "[#{}] Request forwared directly to original destination",
+                    "[#{}] Request forwarded directly to original destination",
                     rid
                 );
-                return Client::new()
-                    .request(req)
-                    .await
-                    .map_err(|e| io_err::<hyper::Error>(e.into()));
+
+                if req.method() != Method::CONNECT {
+                    return Client::new()
+                        .request(req)
+                        .await
+                        .map_err(|e| io_err::<hyper::Error>(e.into()));
+                } else {
+                    let mut stream = match connector.call(req.uri().clone()).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!("Unable to connect to {}: {}", req.uri(), e);
+                            return Ok(Response::builder()
+                                .status(StatusCode::BAD_GATEWAY)
+                                .body(Body::empty())
+                                .unwrap());
+                        }
+                    };
+
+                    let id = rid;
+                    tokio::spawn(async move {
+                        match hyper::upgrade::on(req).await {
+                            Ok(mut upgraded) => {
+                                let (from_client, from_server) =
+                                    match tokio::io::copy_bidirectional(&mut upgraded, &mut stream)
+                                        .await
+                                    {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            warn!("[#{}] Server io error: {}", id, e);
+                                            return;
+                                        }
+                                    };
+
+                                // Print message when done
+                                debug!(
+                                    "[#{}] Client wrote {} bytes and received {} bytes",
+                                    id, from_client, from_server
+                                );
+                            }
+                            Err(e) => warn!("Upgrade error: {}", e),
+                        }
+                    });
+
+                    return Ok(Response::new(Body::empty()));
+                }
             }
         }
-        let mut connector = HttpConnector::new();
-        connector.set_nodelay(true);
 
         for proxy in self.proxies.iter() {
             let stream = match connector.call(proxy.uri.clone()).await {
@@ -84,17 +160,8 @@ impl ProxyClient {
                 }
             };
 
-            let (mut req_sender, connection) = Builder::new()
-                .handshake::<TcpStream, Body>(stream)
-                .await
-                .map_err(|e| io_err::<hyper::Error>(e.into()))?;
-
-            // spawn a task to poll the connection and drive the HTTP state
-            tokio::spawn(async move {
-                let _ = connection.await;
-            });
-
-            let fake = Request::builder()
+            // Create a ping request to ask to the proxy the authentication scheme
+            let ping = Request::builder()
                 .uri(req.uri())
                 .method(if req.method() == Method::CONNECT {
                     Method::CONNECT
@@ -106,19 +173,26 @@ impl ProxyClient {
                     HOST,
                     req.uri().authority().map(|a| a.as_str()).ok_or(Error::new(
                         ErrorKind::Other,
-                        format!(
-                            "[#{}] Unable to get authority section in the request uri",
-                            rid
-                        ),
+                        "Unable to get authority section in the request uri",
                     ))?,
                 )
                 .body(Body::empty())
                 .unwrap();
 
-            trace!("[#{}] Request: {:?}", rid, fake);
+            let (mut req_sender, connection) = Builder::new()
+                .handshake::<TcpStream, Body>(stream)
+                .await
+                .map_err(|e| io_err::<hyper::Error>(e.into()))?;
+
+            // Spawn a task to poll the connection and drive the HTTP state
+            tokio::spawn(async move {
+                let _ = connection.await;
+            });
+
+            trace!("[#{}] Request: {:?}", rid, ping);
             debug!("[#{}] Forwarding request to the proxy", rid);
             let res = req_sender
-                .send_request(fake)
+                .send_request(ping)
                 .await
                 .map_err(|e| io_err::<hyper::Error>(e.into()))?;
 
@@ -127,7 +201,7 @@ impl ProxyClient {
                 trace!("[#{}] Proxy don't require authentication", rid);
                 return Ok(res);
             }
-            debug!("[#{}] Proxy require authentication", rid);
+            debug!("[#{}] Proxy require authentication", rid,);
 
             let headers = res.headers();
             let auth_info = get_proxy_auth_info(match headers.get(PROXY_AUTHENTICATE) {
@@ -137,36 +211,13 @@ impl ProxyClient {
                 None => {
                     return Err(Error::new(
                         ErrorKind::Other,
-                        format!(
-                            "[#{}] Unable to get authentication scheme from proxy",
-                            rid
-                        ),
+                        "Unable to get authentication scheme from proxy",
                     ));
                 }
             });
 
-            let mut fake = Request::builder()
-                .uri(req.uri())
-                .method(req.method())
-                .version(req.version())
-                .header(HOST, req.uri().authority().map(|a| a.as_str()).unwrap())
-                .body(Body::empty())
-                .unwrap();
+            trace!("Authentication scheme information: {:?}", auth_info);
 
-            // Add proxy authorization headers
-            if auth_info != ProxyAuthentication::None {
-                add_authentication_headers(
-                    auth_info,
-                    proxy.credentials.clone().ok_or(Error::new(
-                        ErrorKind::Other,
-                        format!(
-                            "[#{}] The proxy require credentials and it not was given",
-                            rid
-                        ),
-                    ))?,
-                    &mut fake,
-                );
-            }
             let stream = match connector.call(proxy.uri.clone()).await {
                 Ok(v) => v,
                 Err(e) => {
@@ -183,50 +234,47 @@ impl ProxyClient {
                 .await
                 .map_err(|e| io_err::<hyper::Error>(e.into()))?;
 
+            let mut forward: Request<Body>;
+
             if req.method() == Method::CONNECT {
                 let id = rid;
+                // Create new request (CONNECT request must no have headers)
+                forward = Request::builder()
+                    .uri(req.uri())
+                    .method(req.method())
+                    .version(req.version())
+                    .header(HOST, req.uri().authority().map(|a| a.as_str()).unwrap())
+                    .body(Body::empty())
+                    .unwrap();
+
+                // Spawn a task to poll the request and upgrade to make the tunnel
                 tokio::spawn(async move {
-                    let parts = match connection.without_shutdown().await {
-                        Ok(v) => v,
-                        Err(e) => {
-                            error!("[#{}] Unable to get underline stream: {}", id, e);
-                            return;
-                        }
-                    };
-                    let mut io = parts.io;
-
-                    match hyper::upgrade::on(req).await {
-                        Ok(mut upgraded) => {
-                            // Proxying data
-                            let (from_client, from_server) =
-                                match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        error!("[#{}] Server io error: {}", id, e);
-                                        return;
-                                    }
-                                };
-
-                            // Print message when done
-                            debug!(
-                                "[#{}] Client wrote {} bytes and received {} bytes",
-                                id, from_client, from_server
-                            );
-                        }
-                        Err(e) => error!("Upgrade error: {}", e),
-                    }
+                    tunnel(id, connection, req).await;
                 });
             } else {
                 // spawn a task to poll the connection and drive the HTTP state
                 tokio::spawn(async move {
                     let _ = connection.await;
                 });
+                forward = req;
             }
 
-            trace!("[#{}] Request with challenge solved: {:?}", rid, fake);
+            // Add proxy authorization headers
+            if auth_info != ProxyAuthentication::None {
+                add_authentication_headers(
+                    auth_info,
+                    proxy.credentials.clone().ok_or(Error::new(
+                        ErrorKind::Other,
+                        "The proxy require credentials and it not was given",
+                    ))?,
+                    &mut forward,
+                );
+            }
+
+            trace!("[#{}] Request with challenge solved: {:?}", rid, forward);
             debug!("[#{}] Forwarding request to the proxy", rid);
             return req_sender
-                .send_request(fake)
+                .send_request(forward)
                 .await
                 .map_err(|e| io_err::<hyper::Error>(e.into()));
         }
