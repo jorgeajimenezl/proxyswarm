@@ -57,6 +57,12 @@ macro_rules! try_or_error {
 	};
 }
 
+#[cfg(target_family = "unix")]
+static DEFAULT_CONFIGURATION_FILE_PATH: &str = "/etc/proxyswarm.conf";
+#[cfg(target_family = "windows")]
+static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
+
+
 fn main() {
 	let matches = App::new("proxyswarm")
 						.version("0.1.2")
@@ -69,8 +75,8 @@ fn main() {
 							.help("Sets the level of verbosity"))
                         .arg(Arg::with_name("file")
 							.long("file")
-							.short("f")
-							.default_value("/etc/proxyswarm.conf")
+							.short("f")							
+							.default_value(DEFAULT_CONFIGURATION_FILE_PATH)							
 							.takes_value(true)
 							.help("Path to configuration file."))
 						.arg(Arg::with_name("test-file")
