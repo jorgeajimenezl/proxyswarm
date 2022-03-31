@@ -75,7 +75,7 @@ fn main() {
 							.help("Sets the level of verbosity"))
                         .arg(Arg::with_name("file")
 							.long("file")
-							.short("f")							
+							.short("f")
 							.default_value(DEFAULT_CONFIGURATION_FILE_PATH)							
 							.takes_value(true)
 							.help("Path to configuration file."))
