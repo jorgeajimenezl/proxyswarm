@@ -65,7 +65,7 @@ static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
 
 fn main() {
 	let matches = App::new("proxyswarm")
-						.version("0.1.2")
+						.version("0.1.4")
 						.author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
 						.about("Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.")
 						.arg(Arg::with_name("verbosity")
