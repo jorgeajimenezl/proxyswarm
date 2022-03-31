@@ -135,7 +135,6 @@ fn main() {
 }
 
 fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
-	// Create empty context
 	let mut proxies = Vec::new();
 	let mut bypass = Vec::new();
 

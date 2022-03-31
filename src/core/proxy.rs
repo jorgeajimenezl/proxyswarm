@@ -1,22 +1,10 @@
-// use futures_util::future::TryFutureExt;
-use hyper::{/*service::Service, */HeaderMap, Request, Uri, header::PROXY_AUTHORIZATION, Method};
-// use std::io;
-// use std::{
-//     future::Future,
-//     pin::Pin,
-//     task::{self, Context, Poll},
-// };
-// use tokio::{
-//     io::{AsyncRead, AsyncWrite},
-//     net::TcpStream
-// };
+use hyper::{header::PROXY_AUTHORIZATION, HeaderMap, Method, Request, Uri,};
 
 use super::auth::basic::basic_compute_response;
 use super::auth::digest::digest_compute_response;
 use super::utils::{generate_rand_hex, split_once};
-// type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct ProxyDigestInfo {
     pub realm: Option<String>,
     pub domain: Option<String>,
@@ -28,7 +16,7 @@ pub struct ProxyDigestInfo {
     pub qop: Option<String>,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum ProxyAuthentication {
     Unknown,
     Basic,
@@ -46,7 +34,7 @@ pub struct Credentials {
 pub struct Proxy {
     pub uri: Uri,
     pub headers: HeaderMap,
-    pub credentials: Option<Credentials>
+    pub credentials: Option<Credentials>,
 }
 
 pub fn add_authentication_headers<B>(
@@ -67,10 +55,12 @@ pub fn add_authentication_headers<B>(
 
             req.headers_mut().insert(
                 PROXY_AUTHORIZATION,
-                get_auth_digest_response(credentials, &uri, &method, info, 1).parse().unwrap(),
+                get_auth_digest_response(credentials, &uri, &method, info, 1)
+                    .parse()
+                    .unwrap(),
             );
         }
-        _ => ()
+        _ => (),
     }
 }
 
@@ -86,7 +76,14 @@ fn get_auth_digest_response(
     info: ProxyDigestInfo,
     nc: u32,
 ) -> String {
-    let uri = format!("{}", (if method == Method::CONNECT { uri.authority().map(|x| x.as_str()).unwrap() } else { uri.path() }));
+    let uri = format!(
+        "{}",
+        (if method == Method::CONNECT {
+            uri.authority().map(|x| x.as_str()).unwrap()
+        } else {
+            uri.path()
+        })
+    );
     let cnonce = generate_rand_hex(32);
 
     let s = digest_compute_response(
