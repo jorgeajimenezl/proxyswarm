@@ -1,5 +1,5 @@
 extern crate clap;
-use clap::{App, Arg};
+use clap::{Command, Arg};
 
 use tokio;
 
@@ -64,24 +64,24 @@ static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
 
 
 fn main() {
-	let matches = App::new("proxyswarm")
+	let matches = Command::new("proxyswarm")
 						.version("0.1.4")
 						.author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
 						.about("Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.")
-						.arg(Arg::with_name("verbosity")
+						.arg(Arg::new("verbosity")
 						  	.long("verbosity")
-							.short("v")
-							.multiple(true)
+							.short('v')
+							.multiple_occurrences(true)
 							.help("Sets the level of verbosity"))
-                        .arg(Arg::with_name("file")
+                        .arg(Arg::new("file")
 							.long("file")
-							.short("f")
+							.short('f')
 							.default_value(DEFAULT_CONFIGURATION_FILE_PATH)							
 							.takes_value(true)
 							.help("Path to configuration file."))
-						.arg(Arg::with_name("test-file")
+						.arg(Arg::new("test-file")
 							.long("test-file")
-							.short("t")
+							.short('t')
 							.help("Check the syntax of configuration file and exit."))
 						.get_matches();
 
