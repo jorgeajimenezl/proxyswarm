@@ -62,6 +62,7 @@ struct AppContext {
 	pub proxies: Vec<Proxy>,
 	pub bypass: Vec<String>,
 	pub mode: OperationMode,
+	pub tls: bool,
 }
 
 macro_rules! try_or_error {
@@ -171,6 +172,9 @@ fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 						.unwrap_or(String::from("proxy"))
 						.parse::<OperationMode>()?;
 
+	let use_tls = config.getbool("general", "tls")?
+						.unwrap_or(false);
+
 	// Get the proxies
 	let mut sessions = Vec::new();
 	for (k, _) in config.get_map_ref() {
@@ -221,6 +225,7 @@ fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 	);
 
 	Ok(AppContext {
+		tls: use_tls,
 		mode: mode,
 		addr: listen_addr,
 		proxies: proxies,
