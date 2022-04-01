@@ -1,5 +1,6 @@
 # Proxyswarm
 [![Rust](https://github.com/jorgeajimenezl/proxyswarm/actions/workflows/rust.yml/badge.svg)](https://github.com/jorgeajimenezl/proxyswarm/actions/workflows/rust.yml)
+![GitHub tag](https://img.shields.io/github/v/tag/jorgeajimenezl/proxyswarm)
 
 Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.
 
