@@ -39,10 +39,29 @@ use log4rs::{
 };
 
 #[derive(Clone, Debug)]
+enum OperationMode {
+	Transparent,
+	Proxy,
+}
+
+impl FromStr for OperationMode {
+	type Err = String;
+	fn from_str(x: &str) -> std::result::Result<Self, <Self as std::str::FromStr>::Err> {
+		let x = x.to_lowercase();
+		match x.as_ref() {
+			"proxy" => Ok(OperationMode::Proxy),
+			"transparent" => Ok(OperationMode::Transparent),
+			_ => Err(String::from("Proxy mode not available")),
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
 struct AppContext {
 	pub addr: SocketAddr,
 	pub proxies: Vec<Proxy>,
 	pub bypass: Vec<String>,
+	pub mode: OperationMode,
 }
 
 macro_rules! try_or_error {
@@ -133,8 +152,8 @@ fn main() {
 	};
 
 	if matches.is_present("test-file") {
-		info!("Conguration file analized");
-		std::process::exit(1);
+		info!("Conguration file OK :)");
+		std::process::exit(0);
 	}
 
 	do_work(context);
@@ -142,11 +161,15 @@ fn main() {
 
 fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 	let mut proxies = Vec::new();
-	let mut bypass = Vec::new();
+	let bypass = config.get("general", "bypass")
+						.unwrap_or(String::from("127.0.0.1"))
+						.split(",")
+						.map(|x| String::from(x))
+						.collect();
 
-	if let Some(v) = config.get("general", "bypass") {
-		bypass.extend(v.split(",").map(|x| String::from(x)));
-	}
+	let mode = config.get("general", "mode")
+						.unwrap_or(String::from("proxy"))
+						.parse::<OperationMode>()?;
 
 	// Get the proxies
 	let mut sessions = Vec::new();
@@ -198,6 +221,7 @@ fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
 	);
 
 	Ok(AppContext {
+		mode: mode,
 		addr: listen_addr,
 		proxies: proxies,
 		bypass: bypass,
@@ -222,8 +246,9 @@ async fn handle_connection(
 	trace!("[#{}] Request struct: {:?}", id, req);
 
 	// Remove proxy headers
-	req.headers_mut().remove(PROXY_AUTHENTICATE);
-	req.headers_mut().remove(PROXY_AUTHORIZATION);
+	let headers = req.headers_mut();
+	headers.remove(PROXY_AUTHENTICATE);
+	headers.remove(PROXY_AUTHORIZATION);
 
 	let error = Response::builder()
 		.status(StatusCode::INTERNAL_SERVER_ERROR)
