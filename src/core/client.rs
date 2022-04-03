@@ -13,9 +13,7 @@ use hyper::{
 use hyper_tls::{HttpsConnector, MaybeHttpsStream};
 use log::{debug, error, trace, warn};
 use std::io::{Error, ErrorKind};
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
-use tokio::{self, net::TcpStream};
+use tokio::{self, io::{AsyncRead, AsyncWrite}, net::TcpStream};
 
 #[derive(Clone)]
 pub struct ProxyClient {
