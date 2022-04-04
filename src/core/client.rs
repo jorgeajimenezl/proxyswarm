@@ -3,16 +3,17 @@ use hyper::{
     self,
     client::{
         conn::{Builder, Connection},
-        connect::HttpConnector,
+        // connect::HttpConnector,
         Client,
     },
     header::{HOST, PROXY_AUTHENTICATE},
     service::Service,
     Body, Method, Request, Response, StatusCode,
 };
+use hyper_tls::{HttpsConnector, MaybeHttpsStream};
 use log::{debug, error, trace, warn};
 use std::io::{Error, ErrorKind};
-use tokio::{self, net::TcpStream};
+use tokio::{self, io::{AsyncRead, AsyncWrite}, net::TcpStream};
 
 #[derive(Clone)]
 pub struct ProxyClient {
@@ -27,7 +28,10 @@ fn io_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
     Error::new(ErrorKind::Other, e)
 }
 
-async fn tunnel(id: u32, connection: Connection<TcpStream, Body>, req: Request<Body>) {
+async fn tunnel<T>(id: u32, connection: Connection<T, Body>, req: Request<Body>)
+where
+    T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     let parts = match connection.without_shutdown().await {
         Ok(v) => v,
         Err(e) => {
@@ -94,8 +98,8 @@ impl ProxyClient {
     // }
 
     pub async fn request(&self, rid: u32, req: Request<Body>) -> Result<Response<Body>, Error> {
-        let mut connector = HttpConnector::new();
-        connector.set_nodelay(true);
+        let mut connector = HttpsConnector::new();
+
         for host in self.bypass.iter() {
             if req.uri().host().unwrap_or_default() == host {
                 // TODO: FIX THIS
@@ -105,7 +109,8 @@ impl ProxyClient {
                 );
 
                 if req.method() != Method::CONNECT {
-                    return Client::new()
+                    return Client::builder()
+                        .build::<_, Body>(connector)
                         .request(req)
                         .await
                         .map_err(|e| io_err::<hyper::Error>(e.into()));
@@ -180,7 +185,7 @@ impl ProxyClient {
                 .unwrap();
 
             let (mut req_sender, connection) = Builder::new()
-                .handshake::<TcpStream, Body>(stream)
+                .handshake::<MaybeHttpsStream<TcpStream>, Body>(stream)
                 .await
                 .map_err(|e| io_err::<hyper::Error>(e.into()))?;
 
@@ -230,7 +235,7 @@ impl ProxyClient {
             };
 
             let (mut req_sender, connection) = Builder::new()
-                .handshake::<TcpStream, Body>(stream)
+                .handshake::<MaybeHttpsStream<TcpStream>, Body>(stream)
                 .await
                 .map_err(|e| io_err::<hyper::Error>(e.into()))?;
 
