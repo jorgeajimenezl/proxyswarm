@@ -1,4 +1,4 @@
-use hyper::{header::PROXY_AUTHORIZATION, HeaderMap, Method, Request, Uri,};
+use hyper::{header::PROXY_AUTHORIZATION, HeaderMap, Method, Request, Uri};
 
 use super::auth::basic::basic_compute_response;
 use super::auth::digest::digest_compute_response;
