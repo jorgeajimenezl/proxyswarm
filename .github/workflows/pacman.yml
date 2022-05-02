@@ -19,7 +19,9 @@ jobs:
         pacman -Syu --noconfirm
         pacman -Sy git rustup --noconfirm
         rustup default stable
-
+        
+    - uses: actions/checkout@v3
+    
     - name: Setup enviroment
       run: |
         printf '[multilib]\nInclude = /etc/pacman.d/mirrorlist' >> /etc/pacman.conf
@@ -28,9 +30,7 @@ jobs:
         chmod -R a+rw .
         
         cd build
-        sudo -H -u builder makepkg --syncdeps --noconfirm
-
-    - uses: actions/checkout@v3
+        sudo -H -u builder makepkg --syncdeps --noconfirm    
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
