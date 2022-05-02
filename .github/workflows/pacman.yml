@@ -10,30 +10,26 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    container:
-      image: archlinux:base-devel
+    # container:
+    #   image: archlinux:base-devel
 
     steps:
-    - name: Install rust
-      run: |
-        pacman -Syu --noconfirm
-        pacman -Sy git rustup --noconfirm
-        rustup default stable
+    # - name: Install rust
+    #   run: |
+    #     pacman -Syu --noconfirm
+    #     pacman -Sy git rustup --noconfirm
+    #     rustup default stable
 
     - uses: actions/checkout@v3
 
-    - name: Build pacman package
-      run: |
-        chgrp -R nobody .
-        chmod -R g+ws .
-        setfacl -R -m u::rwx,g::rwx .
-        setfacl -R -d --set u::rwx,g::rwx,o::- .
-
-        cd build
-        sudo -u nobody makepkg --noconfirm
+    - name: Build Package
+      uses: ouuan/pkgbuild-action@master
+      id: build-package
+      with:
+        path: build/PKGBUILD
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
       with:
         name: proxyswarm-x86_64-pacman-package
-        path: "*.zst"
+        path: ${{ steps.build-package.outputs.pkgfile }}
