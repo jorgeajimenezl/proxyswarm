@@ -18,7 +18,7 @@ build() {
     export RUSTUP_TOOLCHAIN=stable
     cd "${srcdir}/$pkgname-$pkgver"
     git checkout tags/v$pkgver -b $pkgver
-    cargo build --frozen --release --all-features
+    cargo build --release --all-features
 }
 
 package() {
