@@ -36,4 +36,4 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: proxyswarm-x86_64-pacman-package
-        path: "*.zst"
+        path: build/*.zst
