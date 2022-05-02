@@ -10,26 +10,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # container:
-    #   image: archlinux:base-devel
+    container:
+      image: archlinux:base-devel
 
     steps:
-    # - name: Install rust
-    #   run: |
-    #     pacman -Syu --noconfirm
-    #     pacman -Sy git rustup --noconfirm
-    #     rustup default stable
+    - name: Install rust
+      run: |
+        pacman -Syu --noconfirm
+        pacman -Sy git rustup --noconfirm
+        rustup default stable
+
+    - name: Setup enviroment
+      run: |
+        printf '[multilib]\nInclude = /etc/pacman.d/mirrorlist' >> /etc/pacman.conf
+        useradd builder -m
+        echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+        chmod -R a+rw .
+        
+        cd build
+        sudo -H -u builder makepkg --syncdeps --noconfirm
 
     - uses: actions/checkout@v3
-
-    - name: Build Package
-      uses: ouuan/pkgbuild-action@master
-      id: build-package
-      with:
-        path: ./build/PKGBUILD
 
     - name: Archive pacman package
       uses: actions/upload-artifact@v3
       with:
         name: proxyswarm-x86_64-pacman-package
-        path: ${{ steps.build-package.outputs.pkgfile }}
+        path: "*.zst"
