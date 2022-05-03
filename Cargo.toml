@@ -1,6 +1,6 @@
 [package]
 name = "proxyswarm"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["Jorge Alejandro Jimenez Luna <jorgeajimenezl17@gmail.com>"]
 edition = "2021"
 
