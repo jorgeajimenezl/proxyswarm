@@ -25,7 +25,7 @@ package() {
     cd "${srcdir}/$pkgname-$pkgver"
     install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/$pkgname"
     install -Dm0755 -t "$pkgdir/etc/" "$pkgname.conf"
-    install -Dm0755 -t "$pkgname/usr/lib/systemd/system/" "$pkgname.service"
+    install -Dm0755 -t "$pkgdir/usr/lib/systemd/system/" "$pkgname.service"
 }
 
 post_install() {
