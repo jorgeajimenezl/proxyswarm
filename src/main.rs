@@ -98,7 +98,7 @@ fn main() {
     };
 
     if matches.is_present("test-file") {
-        info!("Conguration file OK :)");
+        info!("Configuration file OK :)");
         std::process::exit(0);
     }
 

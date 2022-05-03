@@ -21,6 +21,7 @@ pub struct ProxyClient {
     bypass: Vec<String>,
 }
 
+use super::utils::natural_size;
 use super::proxy::{add_authentication_headers, get_proxy_auth_info, Proxy, ProxyAuthentication};
 
 #[inline]
@@ -55,8 +56,8 @@ where
 
             // Print message when done
             debug!(
-                "[#{}] Client wrote {} bytes and received {} bytes",
-                id, from_client, from_server
+                "[#{}] Client wrote {} and received {}",
+                id, natural_size(from_client, false), natural_size(from_server, false)
             );
         }
         Err(e) => warn!("Upgrade error: {}", e),
