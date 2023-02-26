@@ -59,7 +59,6 @@ pub struct AppContext {
     pub proxies: Vec<Proxy>,
     pub bypass: Vec<String>,
     pub mode: OperationMode,
-    pub use_tls: bool,
     pub tls: Option<TlsAcceptor>,
 }
 
@@ -131,7 +130,6 @@ impl App {
                 .map_err(|e| format!("Error parsing port to bind the app: {}", e))?,
         );
 
-        let use_tls: bool;
         let tls_identity = if config
             .sections()
             .iter()
@@ -148,7 +146,6 @@ impl App {
                 fs::read(cert_path).map_err(|e| format!("Error reading the certificate: {}", e))?;
             let identity = Identity::from_pkcs12(&identity, &cert_pass)
                 .map_err(|e| format!("Error parsing certificate: {}", e))?;
-            use_tls = true;
 
             let tls = TlsAcceptor::from(
                 native_tls::TlsAcceptor::new(identity)
@@ -156,17 +153,15 @@ impl App {
             );
             Some(tls)
         } else {
-            use_tls = false;
             None
         };
 
         Ok(AppContext {
-            use_tls: use_tls,
             tls: tls_identity,
-            mode: mode,
             addr: listen_addr,
-            proxies: proxies,
-            bypass: bypass,
+            mode,            
+            proxies,
+            bypass,
         })
     }
 
@@ -188,26 +183,29 @@ impl App {
         *c += 1;
         drop(c);
         drop(count);
+
         debug!("[#{}] Incoming connection: {}", id, addr);
         debug!("[#{}] Requested: {}", id, req.uri());
         trace!("[#{}] Request struct: {:?}", id, req);
+
         // Remove proxy headers
         let headers = req.headers_mut();
         headers.remove(PROXY_AUTHENTICATE);
         headers.remove(PROXY_AUTHORIZATION);
-        let error = Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::empty())
-            .unwrap();
-        let client = ProxyClient::from_parts(context.proxies, context.bypass);
+
         // Forward the request
+        let client = ProxyClient::from_parts(context.proxies, context.bypass);
         let res = match client.request(id, req).await {
             Ok(v) => v,
             Err(e) => {
                 error!("Error forwarding request to destination: {}", e);
-                return Ok(error);
+                return Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .unwrap());
             }
         };
+
         debug!("[#{}] Connection processed successful", id);
         return Ok(res);
     }
@@ -256,11 +254,9 @@ impl App {
         Ok(())
     }
 
-    pub async fn run(self) -> Result<(), String> {        
-        let use_tls = self.context.use_tls;
-
+    pub async fn run(self) -> Result<(), String> {
         // Separate to avoid add more logic
-        if !use_tls {
+        if matches!(self.context.tls, None) {
             let addr = self.context.addr.clone();
             let count = Arc::new(Mutex::new(0));
 
@@ -291,7 +287,9 @@ impl App {
 
             graceful.await.map_err(|e| format!("Server Error: {}", e))?;
         } else {
-            App::serve_https(self.context).await.map_err(|e| format!("Server Error: {}", e))?;
+            App::serve_https(self.context)
+                .await
+                .map_err(|e| format!("Server Error: {}", e))?;
         }
         info!("Exiting application...");
         Ok(())

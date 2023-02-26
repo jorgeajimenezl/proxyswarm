@@ -1,11 +1,11 @@
 extern crate clap;
-use clap::{Command, Arg};
+use clap::{Arg, ArgAction, Command};
 
 mod core {
+    pub mod app;
     pub mod client;
     pub mod proxy;
     pub mod utils;
-    pub mod app;
     pub mod auth {
         pub mod basic;
         pub mod digest;
@@ -27,35 +27,33 @@ static DEFAULT_CONFIGURATION_FILE_PATH: &str = "/etc/proxyswarm.conf";
 #[cfg(target_family = "windows")]
 static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
 
-
 fn main() {
     let matches = Command::new("proxyswarm")
                         .version("0.1.5")
                         .author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
                         .about("Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.")
-                        .arg(Arg::new("verbosity")
-                              .long("verbosity")
+                        .arg(Arg::new("verbose")
+                            .long("verbose")
                             .short('v')
-                            .multiple_occurrences(true)
+                            .action(ArgAction::Count)
                             .help("Sets the level of verbosity"))
                         .arg(Arg::new("file")
                             .long("file")
                             .short('f')
-                            .default_value(DEFAULT_CONFIGURATION_FILE_PATH)							
-                            .takes_value(true)
+                            .default_value(DEFAULT_CONFIGURATION_FILE_PATH)
+                            .action(ArgAction::Set)
                             .help("Path to configuration file."))
                         .arg(Arg::new("test-file")
                             .long("test-file")
                             .short('t')
+                            .action(ArgAction::SetTrue)
                             .help("Check the syntax of configuration file and exit."))
                         .get_matches();
 
-    let level = match matches.occurrences_of("verbosity") {
-        0 => LevelFilter::Error,
-        1 => LevelFilter::Warn,
-        2 => LevelFilter::Info,
-        3 => LevelFilter::Debug,
-        4 | _ => LevelFilter::Trace,
+    let level = match matches.get_count("verbose") {
+        0 => LevelFilter::Info,
+        1 => LevelFilter::Debug,
+        2 | _ => LevelFilter::Trace,
     };
 
     // Build a stdout logger.
@@ -83,7 +81,7 @@ fn main() {
 
     // Load configuration file
     let mut config = Ini::new();
-    if let Err(e) = config.load(matches.value_of("file").unwrap()) {
+    if let Err(e) = config.load(matches.get_one::<String>("file").unwrap()) {
         error!("Error loading configuration file: {}", e);
         std::process::exit(1);
     }
@@ -97,7 +95,7 @@ fn main() {
         }
     };
 
-    if matches.is_present("test-file") {
+    if matches.get_flag("test-file") {
         info!("Configuration file OK :)");
         std::process::exit(0);
     }
@@ -106,7 +104,7 @@ fn main() {
 }
 
 #[tokio::main]
-async fn do_work (app: App) {
+async fn do_work(app: App) {
     if let Err(e) = app.run().await {
         error!("{}", e);
     }

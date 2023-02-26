@@ -13,7 +13,11 @@ use hyper::{
 use hyper_tls::{HttpsConnector, MaybeHttpsStream};
 use log::{debug, error, trace, warn};
 use std::io::{Error, ErrorKind};
-use tokio::{self, io::{AsyncRead, AsyncWrite}, net::TcpStream};
+use tokio::{
+    self,
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
 
 #[derive(Clone)]
 pub struct ProxyClient {
@@ -21,8 +25,8 @@ pub struct ProxyClient {
     bypass: Vec<String>,
 }
 
-use super::utils::natural_size;
 use super::proxy::{add_authentication_headers, get_proxy_auth_info, Proxy, ProxyAuthentication};
+use super::utils::natural_size;
 
 #[inline]
 fn io_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
@@ -57,7 +61,9 @@ where
             // Print message when done
             debug!(
                 "[#{}] Client wrote {} and received {}",
-                id, natural_size(from_client, false), natural_size(from_server, false)
+                id,
+                natural_size(from_client, false),
+                natural_size(from_server, false)
             );
         }
         Err(e) => warn!("Upgrade error: {}", e),
@@ -158,14 +164,6 @@ impl ProxyClient {
         }
 
         for proxy in self.proxies.iter() {
-            let stream = match connector.call(proxy.uri.clone()).await {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!("[#{}] Proxy {} is unavailable: {}", rid, proxy.uri, e);
-                    continue;
-                }
-            };
-
             // Create a ping request to ask to the proxy the authentication scheme
             let ping = Request::builder()
                 .uri(req.uri())
@@ -184,6 +182,14 @@ impl ProxyClient {
                 )
                 .body(Body::empty())
                 .unwrap();
+
+            let stream = match connector.call(proxy.uri.clone()).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("[#{}] Proxy {} is unavailable: {}", rid, proxy.uri, e);
+                    continue;
+                }
+            };
 
             let (mut req_sender, connection) = Builder::new()
                 .handshake::<MaybeHttpsStream<TcpStream>, Body>(stream)
