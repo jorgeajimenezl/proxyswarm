@@ -1,5 +1,5 @@
 extern crate clap;
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, ValueHint};
 
 mod core {
     pub mod app;
@@ -29,7 +29,7 @@ static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
 
 fn main() {
     let matches = Command::new("proxyswarm")
-                        .version("0.1.5")
+                        .version("0.2.0")
                         .author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
                         .about("Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.")
                         .arg(Arg::new("verbose")
@@ -37,11 +37,18 @@ fn main() {
                             .short('v')
                             .action(ArgAction::Count)
                             .help("Sets the level of verbosity"))
+                        .arg(Arg::new("quiet")
+                            .long("quiet")
+                            .short('q')
+                            .conflicts_with("verbose")
+                            .action(ArgAction::SetTrue)
+                            .help("Enable quiet mode"))
                         .arg(Arg::new("file")
                             .long("file")
                             .short('f')
                             .default_value(DEFAULT_CONFIGURATION_FILE_PATH)
                             .action(ArgAction::Set)
+                            .value_hint(ValueHint::FilePath)
                             .help("Path to configuration file."))
                         .arg(Arg::new("test-file")
                             .long("test-file")
@@ -51,6 +58,7 @@ fn main() {
                         .get_matches();
 
     let level = match matches.get_count("verbose") {
+        _ if matches.get_flag("quiet") => LevelFilter::Off,
         0 => LevelFilter::Info,
         1 => LevelFilter::Debug,
         2 | _ => LevelFilter::Trace,
