@@ -1,12 +1,7 @@
 use super::client::ProxyClient;
 use super::proxy::{Credentials, Proxy};
 
-use tokio::{
-    self,
-    net::TcpListener,
-    signal,
-    sync::{oneshot, Mutex},
-};
+use tokio::{self, net::TcpListener, signal, sync::oneshot};
 use tokio_native_tls::{
     native_tls::{self, Identity},
     TlsAcceptor,
@@ -21,7 +16,16 @@ use hyper::{
 
 use configparser::ini::Ini;
 use log::{debug, error, info, trace};
-use std::{convert::Infallible, fs, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    convert::Infallible,
+    fs,
+    net::SocketAddr,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+};
 
 #[derive(Clone, Debug)]
 pub enum OperationMode {
@@ -159,7 +163,7 @@ impl App {
         Ok(AppContext {
             tls: tls_identity,
             addr: listen_addr,
-            mode,            
+            mode,
             proxies,
             bypass,
         })
@@ -174,15 +178,11 @@ impl App {
     async fn handle_connection(
         context: AppContext,
         addr: SocketAddr,
-        count: Arc<Mutex<u32>>,
+        count: Arc<AtomicU32>,
         mut req: Request<Body>,
     ) -> Result<Response<Body>, Infallible> {
         // Get connections count
-        let mut c = count.lock().await;
-        let id = *c;
-        *c += 1;
-        drop(c);
-        drop(count);
+        let id = count.fetch_add(1, Ordering::SeqCst);
 
         debug!("[#{}] Incoming connection: {}", id, addr);
         debug!("[#{}] Requested: {}", id, req.uri());
@@ -211,7 +211,7 @@ impl App {
     }
 
     async fn serve_https(context: AppContext) -> Result<(), std::io::Error> {
-        let count = Arc::new(Mutex::new(0));
+        let count = Arc::new(AtomicU32::new(0));
         let listener = TcpListener::bind(context.addr).await?;
 
         info!(
@@ -258,7 +258,7 @@ impl App {
         // Separate to avoid add more logic
         if matches!(self.context.tls, None) {
             let addr = self.context.addr.clone();
-            let count = Arc::new(Mutex::new(0));
+            let count = Arc::new(AtomicU32::new(0));
 
             let make_service = make_service_fn(move |conn: &AddrStream| {
                 let count = count.clone();
