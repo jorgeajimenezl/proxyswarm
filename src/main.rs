@@ -6,6 +6,7 @@ mod core {
     pub mod client;
     pub mod proxy;
     pub mod utils;
+    pub mod transparent;
     pub mod auth {
         pub mod basic;
         pub mod digest;

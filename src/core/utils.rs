@@ -1,3 +1,10 @@
+use std::{
+    io::{Result},
+    mem::{self, MaybeUninit},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    os::fd::AsRawFd,
+};
+
 static BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 static BYTES_SUFFIX: ([&str; 8], [&str; 8]) = (
     ["kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"],
@@ -114,4 +121,30 @@ pub fn natural_size(bytes: u64, binary: bool) -> String {
     }
 
     format!("{:.2} {}", (base * bytes) as f64 / unit as f64, suffix[7])
+}
+
+pub fn get_original_address(fd: &impl AsRawFd) -> Result<SocketAddr> {
+    unsafe {
+        let fd = fd.as_raw_fd();
+        let mut len = mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        let mut val: MaybeUninit<libc::sockaddr_in> = MaybeUninit::uninit();
+
+        let res = libc::getsockopt(
+            fd,
+            libc::SOL_IP,
+            libc::SO_ORIGINAL_DST,
+            val.as_mut_ptr() as *mut libc::c_void,
+            &mut len,
+        );
+        if res != 0 {
+            let e = std::io::Error::last_os_error();
+            return Err(e);
+        }
+
+        let a = val.assume_init();
+        Ok(SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::from(a.sin_addr.s_addr.to_be()),
+            a.sin_port.to_be(),
+        )))
+    }
 }

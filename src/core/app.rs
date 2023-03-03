@@ -1,24 +1,20 @@
 use super::client::ProxyClient;
 use super::proxy::{Credentials, Proxy};
+use super::utils::get_original_address;
 
 use tokio::{self, net::TcpListener, signal, sync::oneshot};
-use tokio_native_tls::{
-    native_tls::{self, Identity},
-    TlsAcceptor,
-};
 
 use hyper::{
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
-    server::conn::{AddrStream, Http},
+    server::conn::AddrStream,
     service::{make_service_fn, service_fn},
     Body, HeaderMap, Request, Response, Server, StatusCode, Uri,
 };
 
 use configparser::ini::Ini;
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use std::{
     convert::Infallible,
-    fs,
     net::SocketAddr,
     str::FromStr,
     sync::{
@@ -45,12 +41,22 @@ impl FromStr for OperationMode {
     }
 }
 
-macro_rules! try_or_error {
+macro_rules! try_or_log {
     ($x:expr, $s:literal) => {
         match $x {
             Ok(v) => v,
             Err(e) => {
                 error!($s, e);
+                return;
+            }
+        }
+    };
+
+    ($lv:ident, $x:expr, $s:literal) => {
+        match $x {
+            Ok(v) => v,
+            Err(e) => {
+                $lv!($s, e);
                 return;
             }
         }
@@ -63,7 +69,6 @@ pub struct AppContext {
     pub proxies: Vec<Proxy>,
     pub bypass: Vec<String>,
     pub mode: OperationMode,
-    pub tls: Option<TlsAcceptor>,
 }
 
 pub struct App {
@@ -134,34 +139,7 @@ impl App {
                 .map_err(|e| format!("Error parsing port to bind the app: {}", e))?,
         );
 
-        let tls_identity = if config
-            .sections()
-            .iter()
-            .map(|s| s.to_lowercase())
-            .any(|e| e == "tls")
-        {
-            let cert_path = config.get("tls", "cert_path").ok_or(String::from(
-                "If tls is active then you must set the certificate path",
-            ))?;
-            let cert_pass = config.get("tls", "password").ok_or(String::from(
-                "If tls is active then you must set the certificate password",
-            ))?;
-            let identity =
-                fs::read(cert_path).map_err(|e| format!("Error reading the certificate: {}", e))?;
-            let identity = Identity::from_pkcs12(&identity, &cert_pass)
-                .map_err(|e| format!("Error parsing certificate: {}", e))?;
-
-            let tls = TlsAcceptor::from(
-                native_tls::TlsAcceptor::new(identity)
-                    .map_err(|e| format!("Unable create TLS context: {}", e))?,
-            );
-            Some(tls)
-        } else {
-            None
-        };
-
         Ok(AppContext {
-            tls: tls_identity,
             addr: listen_addr,
             mode,
             proxies,
@@ -189,9 +167,11 @@ impl App {
         trace!("[#{}] Request struct: {:?}", id, req);
 
         // Remove proxy headers
-        let headers = req.headers_mut();
-        headers.remove(PROXY_AUTHENTICATE);
-        headers.remove(PROXY_AUTHORIZATION);
+        if matches!(context.mode, OperationMode::Proxy) {
+            let headers = req.headers_mut();
+            headers.remove(PROXY_AUTHENTICATE);
+            headers.remove(PROXY_AUTHORIZATION);
+        }
 
         // Forward the request
         let client = ProxyClient::from_parts(context.proxies, context.bypass);
@@ -210,12 +190,12 @@ impl App {
         return Ok(res);
     }
 
-    async fn serve_https(context: AppContext) -> Result<(), std::io::Error> {
+    async fn serve_transparent(context: AppContext) -> Result<(), std::io::Error> {
         let count = Arc::new(AtomicU32::new(0));
         let listener = TcpListener::bind(context.addr).await?;
 
         info!(
-            "Proxy listening at https://{}. Press Ctrl+C to stop it",
+            "Proxy capturing packages at {}. Press Ctrl+C to stop it",
             context.addr
         );
 
@@ -224,23 +204,30 @@ impl App {
             loop {
                 tokio::select! {
                     k = listener.accept() => {
-                        let acceptor = context.tls.clone();
                         let context = context.clone();
                         let count = count.clone();
 
-                        let (stream, addr) = try_or_error!(k, "Unable to accept incomming TCP connection: {}");
-                        let service =
-                            service_fn(move |req| App::handle_connection(context.clone(), addr, count.clone(), req));
-                        tokio::task::spawn(async move {
-                            let tls_stream = try_or_error!(acceptor.unwrap().accept(stream).await, "TLS handshake error: {}");
-                            if let Err(e) = Http::new()
-                                    .http1_only(true)
-                                    .http1_keep_alive(true)
-                                    .serve_connection(tls_stream, service)
-                                    .await {
-                                error!("Server Error: {}", e);
-                            }
-                        });
+                        let (stream, addr) = try_or_log!(k,
+                            "Unable to accept incomming TCP connection: {}"
+                        );
+
+                        let original_addr = try_or_log!(
+                            warn, get_original_address(&stream),
+                            "Refused direct connection: {}"
+                        );
+
+                        // Get connections count
+                        let id = count.fetch_add(1, Ordering::SeqCst);
+                        debug!("[#{}] Incoming TCP connection: {} Destination: {}", id, addr, original_addr);
+
+                        // Forward the request
+                        let client = ProxyClient::from_parts(context.proxies, context.bypass);
+                        if let Err(e) = client.request_transparent(id, stream).await {
+                            error!("Error forwarding connection to destination: {}", e);
+                            return;
+                        };
+
+                        debug!("[#{}] Connection processed successful", id);
                     }
                     _ = (&mut rx) => {
                         break;
@@ -254,40 +241,42 @@ impl App {
         Ok(())
     }
 
+    async fn serve_http(context: AppContext) -> Result<(), hyper::Error> {
+        let addr = context.addr.clone();
+        let count = Arc::new(AtomicU32::new(0));
+        let make_service = make_service_fn(move |conn: &AddrStream| {
+            let count = count.clone();
+            let context = context.clone();
+            let addr = conn.remote_addr();
+
+            let service = service_fn(move |req| {
+                App::handle_connection(context.clone(), addr, count.clone(), req)
+            });
+
+            async move { Ok::<_, Infallible>(service) }
+        });
+        let server = Server::bind(&addr).serve(make_service);
+        info!(
+            "Proxy listening at http://{}. Press Ctrl+C to stop it",
+            addr
+        );
+        let graceful = server.with_graceful_shutdown(async {
+            signal::ctrl_c()
+                .await
+                .expect("Failed to install CTRL+C signal handler");
+        });
+        graceful.await?;
+        Ok(())
+    }
+
     pub async fn run(self) -> Result<(), String> {
         // Separate to avoid add more logic
-        if matches!(self.context.tls, None) {
-            let addr = self.context.addr.clone();
-            let count = Arc::new(AtomicU32::new(0));
-
-            let make_service = make_service_fn(move |conn: &AddrStream| {
-                let count = count.clone();
-                let context = self.context.clone();
-                let addr = conn.remote_addr();
-
-                let service = service_fn(move |req| {
-                    App::handle_connection(context.clone(), addr, count.clone(), req)
-                });
-
-                async move { Ok::<_, Infallible>(service) }
-            });
-
-            let server = Server::bind(&addr).serve(make_service);
-            info!(
-                "Proxy listening at http://{}. Press Ctrl+C to stop it",
-                addr
-            );
-
-            // Prepare some signal for when the server should start shutting down...
-            let graceful = server.with_graceful_shutdown(async {
-                signal::ctrl_c()
-                    .await
-                    .expect("Failed to install CTRL+C signal handler");
-            });
-
-            graceful.await.map_err(|e| format!("Server Error: {}", e))?;
+        if matches!(self.context.mode, OperationMode::Proxy) {
+            App::serve_http(self.context)
+                .await
+                .map_err(|e| format!("Server Error: {}", e))?;
         } else {
-            App::serve_https(self.context)
+            App::serve_transparent(self.context)
                 .await
                 .map_err(|e| format!("Server Error: {}", e))?;
         }
