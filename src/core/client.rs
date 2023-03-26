@@ -7,12 +7,13 @@ use hyper::{
         Client,
     },
     header::{HOST, PROXY_AUTHENTICATE},
+    http::HeaderValue,
     service::Service,
     Body, Method, Request, Response, StatusCode,
 };
 use hyper_tls::{HttpsConnector, MaybeHttpsStream};
 use log::{debug, error, trace, warn};
-use std::io::{Error, ErrorKind};
+use std::{io::{Error, ErrorKind}, net::{SocketAddr, Ipv4Addr}};
 use tokio::{
     self,
     io::{AsyncRead, AsyncWrite},
@@ -21,15 +22,16 @@ use tokio::{
 
 #[derive(Clone)]
 pub struct ProxyClient {
-    proxies: Vec<Proxy>,
-    bypass: Vec<String>,
+    pub(crate) rid: u32,
+    pub(crate) proxies: Vec<Proxy>,
+    pub(crate) bypass: Vec<String>,
 }
 
 use super::proxy::{add_authentication_headers, get_proxy_auth_info, Proxy, ProxyAuthentication};
 use super::utils::natural_size;
 
 #[inline]
-fn io_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
+pub(crate) fn io_err<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> Error {
     Error::new(ErrorKind::Other, e)
 }
 
@@ -49,7 +51,7 @@ where
     match hyper::upgrade::on(req).await {
         Ok(mut upgraded) => {
             // Proxying data
-            let (from_client, from_server) =
+            let (from, to) =
                 match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
                     Ok(v) => v,
                     Err(e) => {
@@ -62,8 +64,8 @@ where
             debug!(
                 "[#{}] Client wrote {} and received {}",
                 id,
-                natural_size(from_client, false),
-                natural_size(from_server, false)
+                natural_size(from, false),
+                natural_size(to, false)
             );
         }
         Err(e) => warn!("Upgrade error: {}", e),
@@ -71,17 +73,11 @@ where
 }
 
 impl ProxyClient {
-    // pub fn new() -> Self {
-    //     ProxyClient {
-    //         proxies: Vec::new(),
-    //         bypass: Vec::new()
-    //     }
-    // }
-
-    pub fn from_parts(proxies: Vec<Proxy>, bypass: Vec<String>) -> Self {
+    pub fn new(rid: u32, proxies: Vec<Proxy>, bypass: Vec<String>) -> Self {
         ProxyClient {
-            proxies: proxies,
-            bypass: bypass,
+            rid,
+            proxies,
+            bypass,
         }
     }
 
@@ -104,62 +100,64 @@ impl ProxyClient {
     //     return &self.proxies;
     // }
 
-    pub async fn request(&self, rid: u32, req: Request<Body>) -> Result<Response<Body>, Error> {
+    pub async fn request(&self, req: Request<Body>) -> Result<Response<Body>, Error> {
         let mut connector = HttpsConnector::new();
 
         for host in self.bypass.iter() {
-            if req.uri().host().unwrap_or_default() == host {
-                // TODO: FIX THIS
-                debug!(
-                    "[#{}] Request forwarded directly to original destination",
-                    rid
-                );
+            if req.uri().host().unwrap_or_default() != host {
+                continue;
+            }
 
-                if req.method() != Method::CONNECT {
-                    return Client::builder()
-                        .build::<_, Body>(connector)
-                        .request(req)
-                        .await
-                        .map_err(|e| io_err::<hyper::Error>(e.into()));
-                } else {
-                    let mut stream = match connector.call(req.uri().clone()).await {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!("Unable to connect to {}: {}", req.uri(), e);
-                            return Ok(Response::builder()
-                                .status(StatusCode::BAD_GATEWAY)
-                                .body(Body::empty())
-                                .unwrap());
+            // TODO: FIX THIS
+            debug!(
+                "[#{}] Request forwarded directly to original destination",
+                self.rid
+            );
+
+            if req.method() != Method::CONNECT {
+                return Client::builder()
+                    .build::<_, Body>(connector)
+                    .request(req)
+                    .await
+                    .map_err(|e| io_err::<hyper::Error>(e.into()));
+            } else {
+                let mut stream = match connector.call(req.uri().clone()).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("Unable to connect to {}: {}", req.uri(), e);
+                        return Ok(Response::builder()
+                            .status(StatusCode::BAD_GATEWAY)
+                            .body(Body::empty())
+                            .unwrap());
+                    }
+                };
+
+                let id = self.rid;
+                tokio::spawn(async move {
+                    match hyper::upgrade::on(req).await {
+                        Ok(mut upgraded) => {
+                            let (from, to) =
+                                match tokio::io::copy_bidirectional(&mut upgraded, &mut stream)
+                                    .await
+                                {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        warn!("[#{}] Server io error: {}", id, e);
+                                        return;
+                                    }
+                                };
+
+                            // Print message when done
+                            debug!(
+                                "[#{}] Client wrote {} bytes and received {} bytes",
+                                id, from, to
+                            );
                         }
-                    };
+                        Err(e) => warn!("Upgrade error: {}", e),
+                    }
+                });
 
-                    let id = rid;
-                    tokio::spawn(async move {
-                        match hyper::upgrade::on(req).await {
-                            Ok(mut upgraded) => {
-                                let (from_client, from_server) =
-                                    match tokio::io::copy_bidirectional(&mut upgraded, &mut stream)
-                                        .await
-                                    {
-                                        Ok(v) => v,
-                                        Err(e) => {
-                                            warn!("[#{}] Server io error: {}", id, e);
-                                            return;
-                                        }
-                                    };
-
-                                // Print message when done
-                                debug!(
-                                    "[#{}] Client wrote {} bytes and received {} bytes",
-                                    id, from_client, from_server
-                                );
-                            }
-                            Err(e) => warn!("Upgrade error: {}", e),
-                        }
-                    });
-
-                    return Ok(Response::new(Body::empty()));
-                }
+                return Ok(Response::new(Body::empty()));
             }
         }
 
@@ -175,10 +173,15 @@ impl ProxyClient {
                 .version(req.version())
                 .header(
                     HOST,
-                    req.uri().authority().map(|a| a.as_str()).ok_or(Error::new(
-                        ErrorKind::Other,
-                        "Unable to get authority section in the request uri",
-                    ))?,
+                    req.uri()
+                        .authority()
+                        .map(|a| HeaderValue::from_str(a.as_str()).ok())
+                        .flatten()
+                        .or(req.headers().get(HOST).cloned())
+                        .ok_or(Error::new(
+                            ErrorKind::Other,
+                            "Unable to get host destination info (from URI or HOST header)",
+                        ))?,
                 )
                 .body(Body::empty())
                 .unwrap();
@@ -186,7 +189,7 @@ impl ProxyClient {
             let stream = match connector.call(proxy.uri.clone()).await {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("[#{}] Proxy {} is unavailable: {}", rid, proxy.uri, e);
+                    warn!("[#{}] Proxy {} is unavailable: {}", self.rid, proxy.uri, e);
                     continue;
                 }
             };
@@ -201,8 +204,8 @@ impl ProxyClient {
                 let _ = connection.await;
             });
 
-            trace!("[#{}] Request: {:?}", rid, ping);
-            debug!("[#{}] Forwarding request to the proxy", rid);
+            trace!("[#{}] Request: {:?}", self.rid, ping);
+            debug!("[#{}] Forwarding request to the proxy", self.rid);
             let res = req_sender
                 .send_request(ping)
                 .await
@@ -210,10 +213,10 @@ impl ProxyClient {
 
             // If proxy don't say 407 just redirect the request
             if res.status() != StatusCode::PROXY_AUTHENTICATION_REQUIRED {
-                trace!("[#{}] Proxy don't require authentication", rid);
+                trace!("[#{}] Proxy don't require authentication", self.rid);
                 return Ok(res);
             }
-            debug!("[#{}] Proxy require authentication", rid,);
+            debug!("[#{}] Proxy require authentication", self.rid);
 
             let headers = res.headers();
             let auth_info = get_proxy_auth_info(match headers.get(PROXY_AUTHENTICATE) {
@@ -235,7 +238,7 @@ impl ProxyClient {
                 Err(e) => {
                     warn!(
                         "[#{}] Proxy {} is unavailable to resolve authentication challenge: {}",
-                        rid, proxy.uri, e
+                        self.rid, proxy.uri, e
                     );
                     continue;
                 }
@@ -249,7 +252,7 @@ impl ProxyClient {
             let mut forward: Request<Body>;
 
             if req.method() == Method::CONNECT {
-                let id = rid;
+                let id = self.rid;
                 // Create new request (CONNECT request must no have headers)
                 forward = Request::builder()
                     .uri(req.uri())
@@ -283,8 +286,8 @@ impl ProxyClient {
                 );
             }
 
-            trace!("[#{}] Request with challenge solved: {:?}", rid, forward);
-            debug!("[#{}] Forwarding request to the proxy", rid);
+            trace!("[#{}] Request with challenge solved: {:?}", self.rid, forward);
+            debug!("[#{}] Forwarding request to the proxy", self.rid);
             return req_sender
                 .send_request(forward)
                 .await

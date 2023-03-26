@@ -1,5 +1,5 @@
 use std::{
-    io::{Result},
+    io::Result,
     mem::{self, MaybeUninit},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     os::fd::AsRawFd,
@@ -136,9 +136,8 @@ pub fn get_original_address(fd: &impl AsRawFd) -> Result<SocketAddr> {
             val.as_mut_ptr() as *mut libc::c_void,
             &mut len,
         );
-        if res != 0 {
-            let e = std::io::Error::last_os_error();
-            return Err(e);
+        if res == -1 {
+            return Err(std::io::Error::last_os_error());
         }
 
         let a = val.assume_init();
@@ -148,3 +147,45 @@ pub fn get_original_address(fd: &impl AsRawFd) -> Result<SocketAddr> {
         )))
     }
 }
+
+pub fn set_socket_mark(fd: &impl AsRawFd, mark: u32) -> Result<()> {
+    unsafe {
+        let fd = fd.as_raw_fd();
+        let len = mem::size_of::<u32>() as libc::socklen_t;
+
+        let res = libc::setsockopt(
+            fd,
+            libc::SOL_IP,
+            libc::SO_MARK,
+            mark as *mut libc::c_void,
+            len,
+        );
+        if res != -1 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
+
+pub fn set_transparent(fd: &impl AsRawFd) -> Result<()> {
+    unsafe {
+        let fd = fd.as_raw_fd();
+        let len = mem::size_of::<u32>() as libc::socklen_t;
+
+        let res = libc::setsockopt(
+            fd,
+            libc::SOL_IP,
+            libc::IP_TRANSPARENT,
+            1 as *mut libc::c_void,
+            len,
+        );
+        if res != -1 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+

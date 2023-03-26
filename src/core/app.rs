@@ -1,18 +1,19 @@
 use super::client::ProxyClient;
 use super::proxy::{Credentials, Proxy};
-use super::utils::get_original_address;
+use super::utils::{get_original_address, set_transparent};
 
 use tokio::{self, net::TcpListener, signal, sync::oneshot};
 
 use hyper::{
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
-    server::conn::AddrStream,
+    server::conn::{AddrStream, Http},
     service::{make_service_fn, service_fn},
     Body, HeaderMap, Request, Response, Server, StatusCode, Uri,
 };
 
 use configparser::ini::Ini;
 use log::{debug, error, info, trace, warn};
+use std::os::fd::AsRawFd;
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -162,7 +163,7 @@ impl App {
         // Get connections count
         let id = count.fetch_add(1, Ordering::SeqCst);
 
-        debug!("[#{}] Incoming connection: {}", id, addr);
+        debug!("[#{}] Incoming connection: <{}>", id, addr);
         debug!("[#{}] Requested: {}", id, req.uri());
         trace!("[#{}] Request struct: {:?}", id, req);
 
@@ -174,8 +175,8 @@ impl App {
         }
 
         // Forward the request
-        let client = ProxyClient::from_parts(context.proxies, context.bypass);
-        let res = match client.request(id, req).await {
+        let client = ProxyClient::new(id, context.proxies, context.bypass);
+        let res = match client.request(req).await {
             Ok(v) => v,
             Err(e) => {
                 error!("Error forwarding request to destination: {}", e);
@@ -194,6 +195,9 @@ impl App {
         let count = Arc::new(AtomicU32::new(0));
         let listener = TcpListener::bind(context.addr).await?;
 
+        // Set transparent
+        set_transparent(&listener)?;
+
         info!(
             "Proxy capturing packages at {}. Press Ctrl+C to stop it",
             context.addr
@@ -211,23 +215,44 @@ impl App {
                             "Unable to accept incomming TCP connection: {}"
                         );
 
-                        let original_addr = try_or_log!(
-                            warn, get_original_address(&stream),
-                            "Refused direct connection: {}"
-                        );
+                        println!("{}", stream.peer_addr().unwrap());
 
-                        // Get connections count
-                        let id = count.fetch_add(1, Ordering::SeqCst);
-                        debug!("[#{}] Incoming TCP connection: {} Destination: {}", id, addr, original_addr);
+                        // let original_addr = try_or_log!(
+                        //     warn, get_original_address(&stream),
+                        //     "Refused direct connection: {}"
+                        // );
 
-                        // Forward the request
-                        let client = ProxyClient::from_parts(context.proxies, context.bypass);
-                        if let Err(e) = client.request_transparent(id, stream).await {
-                            error!("Error forwarding connection to destination: {}", e);
-                            return;
-                        };
+                        // // Specifics port can be use as a proxy
+                        // // will does'nt have any effect for it
+                        // if true && original_addr.port() == 80 {
+                        //     let service = service_fn(move |req| 
+                        //         App::handle_connection(context.clone(), addr, count.clone(), req)
+                        //     );
+                        //     if let Err(e) = Http::new()
+                        //                 .http1_only(true)
+                        //                 .http1_keep_alive(true)
+                        //                 .serve_connection(stream, service)
+                        //                 .await {
+                        //             error!("Server Error: {}", e);
+                        //         }
+                        //     return;
+                        // }
 
-                        debug!("[#{}] Connection processed successful", id);
+                        // // Get connections count
+                        // let id = count.fetch_add(1, Ordering::SeqCst);
+                        // debug!("[#{}] Incoming TCP connection: <{}> -> <{}>", id, addr, original_addr);
+
+                        // // Forward the request
+                        // let client = ProxyClient::new(id, context.proxies, context.bypass);
+                        // // let dest = format!("{}", original_addr);
+                        // let dest = "www.httpbin.org:443";
+
+                        // if let Err(e) = client.request_transparent(stream, &dest).await {
+                        //     error!("Error forwarding connection to destination: {}", e);
+                        //     return;
+                        // };
+
+                        // debug!("[#{}] Connection processed successful", id);
                     }
                     _ = (&mut rx) => {
                         break;
@@ -265,8 +290,7 @@ impl App {
                 .await
                 .expect("Failed to install CTRL+C signal handler");
         });
-        graceful.await?;
-        Ok(())
+        Ok(graceful.await?)
     }
 
     pub async fn run(self) -> Result<(), String> {
