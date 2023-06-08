@@ -1,5 +1,4 @@
 use std::{
-    io::Result,
     mem::{self, MaybeUninit},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     os::fd::AsRawFd,
@@ -15,8 +14,10 @@ pub fn encode_base64_len(n: usize) -> usize {
     ((n + 2) / 3) << 2 | 1
 }
 
-pub fn encode_base64(src: &[u8], dst: &mut [u8]) -> usize {
-    assert!(dst.len() >= encode_base64_len(src.len()));
+pub fn encode_base64(src: &[u8], dst: &mut [u8]) -> Result<usize, String> {
+    if dst.len() < encode_base64_len(src.len()) {
+        return Err(String::from("destination buffer not large enough"));
+    }
 
     let mut i = 0;
     let mut j = 0;
@@ -48,7 +49,7 @@ pub fn encode_base64(src: &[u8], dst: &mut [u8]) -> usize {
         dst[j] = b'=';
         j += 1;
     }
-    j
+    Ok(j)
 }
 
 pub fn split_once<'a>(s: &'a str, pattern: &str) -> Option<(&'a str, &'a str)> {
@@ -123,7 +124,7 @@ pub fn natural_size(bytes: u64, binary: bool) -> String {
     format!("{:.2} {}", (base * bytes) as f64 / unit as f64, suffix[7])
 }
 
-pub fn get_original_address(fd: &impl AsRawFd) -> Result<SocketAddr> {
+pub fn get_original_address(fd: &impl AsRawFd) -> std::io::Result<SocketAddr> {
     unsafe {
         let fd = fd.as_raw_fd();
         let mut len = mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
@@ -148,7 +149,7 @@ pub fn get_original_address(fd: &impl AsRawFd) -> Result<SocketAddr> {
     }
 }
 
-pub fn set_socket_mark(fd: &impl AsRawFd, mark: u32) -> Result<()> {
+pub fn set_socket_mark(fd: &impl AsRawFd, mark: u32) -> std::io::Result<()> {
     unsafe {
         let fd = fd.as_raw_fd();
         let len = mem::size_of::<u32>() as libc::socklen_t;
@@ -169,7 +170,7 @@ pub fn set_socket_mark(fd: &impl AsRawFd, mark: u32) -> Result<()> {
 }
 
 
-pub fn set_transparent(fd: &impl AsRawFd) -> Result<()> {
+pub fn set_transparent(fd: &impl AsRawFd) -> std::io::Result<()> {
     unsafe {
         let fd = fd.as_raw_fd();
         let len = mem::size_of::<u32>() as libc::socklen_t;
