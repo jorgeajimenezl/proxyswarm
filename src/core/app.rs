@@ -1,6 +1,5 @@
 use super::client::ProxyClient;
 use super::proxy::{Credentials, Proxy};
-use super::utils::{get_original_address, set_transparent};
 
 use tokio::{self, net::TcpListener, signal, sync::oneshot};
 
@@ -191,81 +190,6 @@ impl App {
         return Ok(res);
     }
 
-    async fn serve_transparent(context: AppContext) -> Result<(), std::io::Error> {
-        let count = Arc::new(AtomicU32::new(0));
-        let listener = TcpListener::bind(context.addr).await?;
-
-        // Set transparent
-        set_transparent(&listener)?;
-
-        info!(
-            "Proxy capturing packages at {}. Press Ctrl+C to stop it",
-            context.addr
-        );
-
-        let (tx, mut rx) = oneshot::channel::<()>();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    k = listener.accept() => {
-                        let context = context.clone();
-                        let count = count.clone();
-
-                        let (stream, addr) = try_or_log!(k,
-                            "Unable to accept incomming TCP connection: {}"
-                        );
-
-                        println!("{}", stream.peer_addr().unwrap());
-
-                        // let original_addr = try_or_log!(
-                        //     warn, get_original_address(&stream),
-                        //     "Refused direct connection: {}"
-                        // );
-
-                        // // Specifics port can be use as a proxy
-                        // // will does'nt have any effect for it
-                        // if true && original_addr.port() == 80 {
-                        //     let service = service_fn(move |req| 
-                        //         App::handle_connection(context.clone(), addr, count.clone(), req)
-                        //     );
-                        //     if let Err(e) = Http::new()
-                        //                 .http1_only(true)
-                        //                 .http1_keep_alive(true)
-                        //                 .serve_connection(stream, service)
-                        //                 .await {
-                        //             error!("Server Error: {}", e);
-                        //         }
-                        //     return;
-                        // }
-
-                        // // Get connections count
-                        // let id = count.fetch_add(1, Ordering::SeqCst);
-                        // debug!("[#{}] Incoming TCP connection: <{}> -> <{}>", id, addr, original_addr);
-
-                        // // Forward the request
-                        // let client = ProxyClient::new(id, context.proxies, context.bypass);
-                        // // let dest = format!("{}", original_addr);
-                        // let dest = "www.httpbin.org:443";
-
-                        // if let Err(e) = client.request_transparent(stream, &dest).await {
-                        //     error!("Error forwarding connection to destination: {}", e);
-                        //     return;
-                        // };
-
-                        // debug!("[#{}] Connection processed successful", id);
-                    }
-                    _ = (&mut rx) => {
-                        break;
-                    }
-                };
-            }
-        });
-
-        signal::ctrl_c().await?;
-        let _ = tx.send(());
-        Ok(())
-    }
-
     async fn serve_http(context: AppContext) -> Result<(), hyper::Error> {
         let addr = context.addr.clone();
         let count = Arc::new(AtomicU32::new(0));
@@ -296,14 +220,13 @@ impl App {
     pub async fn run(self) -> Result<(), String> {
         // Separate to avoid add more logic
         if matches!(self.context.mode, OperationMode::Proxy) {
-            App::serve_http(self.context)
-                .await
-                .map_err(|e| format!("Server Error: {}", e))?;
-        } else {
-            App::serve_transparent(self.context)
-                .await
-                .map_err(|e| format!("Server Error: {}", e))?;
+            todo!();
         }
+
+        App::serve_http(self.context)
+            .await
+            .map_err(|e| format!("Server Error: {}", e))?;
+
         info!("Exiting application...");
         Ok(())
     }
