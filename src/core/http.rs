@@ -6,14 +6,14 @@ use hyper::{
         // connect::HttpConnector,
         Client,
     },
-    header::{HOST, PROXY_AUTHENTICATE},
+    header::HOST,
     http::HeaderValue,
     service::Service,
     Body, Method, Request, Response, StatusCode,
 };
 use hyper_tls::{HttpsConnector, MaybeHttpsStream};
 use log::{debug, error, trace, warn};
-use std::{io::{Error, ErrorKind}, net::{SocketAddr, Ipv4Addr}};
+use std::io::{Error, ErrorKind};
 use tokio::{
     self,
     io::{AsyncRead, AsyncWrite},
@@ -21,13 +21,13 @@ use tokio::{
 };
 
 #[derive(Clone)]
-pub struct ProxyClient {
+pub struct ProxyHttp {
     pub(crate) rid: u32,
     pub(crate) proxies: Vec<Proxy>,
     pub(crate) bypass: Vec<String>,
 }
 
-use super::proxy::{add_authentication_headers, get_proxy_auth_info, Proxy, ProxyAuthentication};
+use super::proxy::{Proxy, ProxyAuthentication};
 use super::utils::natural_size;
 
 #[inline]
@@ -51,14 +51,13 @@ where
     match hyper::upgrade::on(req).await {
         Ok(mut upgraded) => {
             // Proxying data
-            let (from, to) =
-                match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("[#{}] Server io error: {}", id, e);
-                        return;
-                    }
-                };
+            let (from, to) = match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("[#{}] Server io error: {}", id, e);
+                    return;
+                }
+            };
 
             // Print message when done
             debug!(
@@ -72,9 +71,9 @@ where
     }
 }
 
-impl ProxyClient {
+impl ProxyHttp {
     pub fn new(rid: u32, proxies: Vec<Proxy>, bypass: Vec<String>) -> Self {
-        ProxyClient {
+        ProxyHttp {
             rid,
             proxies,
             bypass,
@@ -218,18 +217,8 @@ impl ProxyClient {
             }
             debug!("[#{}] Proxy require authentication", self.rid);
 
-            let headers = res.headers();
-            let auth_info = get_proxy_auth_info(match headers.get(PROXY_AUTHENTICATE) {
-                Some(d) => d
-                    .to_str()
-                    .map_err(|e| io_err::<hyper::header::ToStrError>(e.into()))?,
-                None => {
-                    return Err(Error::new(
-                        ErrorKind::Other,
-                        "Unable to get authentication scheme from proxy",
-                    ));
-                }
-            });
+            let auth_info = Proxy::get_auth_info(&res)
+                .map_err(|e| io_err::<hyper::header::ToStrError>(e.into()))?;
 
             trace!("Authentication scheme information: {:?}", auth_info);
 
@@ -276,17 +265,14 @@ impl ProxyClient {
 
             // Add proxy authorization headers
             if auth_info != ProxyAuthentication::None {
-                add_authentication_headers(
-                    auth_info,
-                    proxy.credentials.clone().ok_or(Error::new(
-                        ErrorKind::Other,
-                        "The proxy require credentials and it not was given",
-                    ))?,
-                    &mut forward,
-                );
+                proxy.add_authentication_headers(auth_info, &mut forward)?;
             }
 
-            trace!("[#{}] Request with challenge solved: {:?}", self.rid, forward);
+            trace!(
+                "[#{}] Request with challenge solved: {:?}",
+                self.rid,
+                forward
+            );
             debug!("[#{}] Forwarding request to the proxy", self.rid);
             return req_sender
                 .send_request(forward)

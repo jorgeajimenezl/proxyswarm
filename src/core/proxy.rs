@@ -1,26 +1,18 @@
-use hyper::{header::PROXY_AUTHORIZATION, HeaderMap, Method, Request, Uri};
+use hyper::{
+    header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
+    HeaderMap, Request, Response, Uri,
+};
 
-use super::auth::basic::basic_compute_response;
-use super::auth::digest::digest_compute_response;
-use super::utils::{generate_rand_hex, split_once};
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct ProxyDigestInfo {
-    pub realm: Option<String>,
-    pub domain: Option<String>,
-    pub uri: Option<String>,
-    pub nonce: Option<String>,
-    pub opaque: Option<String>,
-    pub stale: Option<String>,
-    pub algorithm: Option<String>,
-    pub qop: Option<String>,
-}
+use super::utils::split_once;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use digest_auth::AuthContext;
+use std::io::{self, Error, ErrorKind};
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum ProxyAuthentication {
+pub enum ProxyAuthentication<'a> {
     Unknown,
     Basic,
-    Digest(ProxyDigestInfo),
+    Digest(&'a str),
     None,
 }
 
@@ -37,121 +29,65 @@ pub struct Proxy {
     pub credentials: Option<Credentials>,
 }
 
-pub fn add_authentication_headers<B>(
-    authentication: ProxyAuthentication,
-    credentials: Credentials,
-    req: &mut Request<B>,
-) {
-    match authentication {
-        ProxyAuthentication::Basic => {
-            req.headers_mut().insert(
-                PROXY_AUTHORIZATION,
-                get_auth_basic_response(credentials).parse().unwrap(),
-            );
-        }
-        ProxyAuthentication::Digest(info) => {
-            let uri = req.uri().clone();
-            let method = req.method().clone();
+impl Proxy {
+    pub fn add_authentication_headers<B>(
+        &self,
+        authentication: ProxyAuthentication,
+        req: &mut Request<B>,
+    ) -> io::Result<()> {
+        let credentials = (&self.credentials).as_ref().ok_or(Error::new(
+            ErrorKind::Other,
+            "The proxy require credentials and it not was given",
+        ))?;
 
-            req.headers_mut().insert(
-                PROXY_AUTHORIZATION,
-                get_auth_digest_response(credentials, &uri, &method, info, 1)
-                    .parse()
-                    .unwrap(),
-            );
-        }
-        _ => (),
-    }
-}
+        match authentication {
+            ProxyAuthentication::Basic => {
+                let cred = format!("{}:{}", credentials.username, credentials.password);
 
-fn get_auth_basic_response(credentials: Credentials) -> String {
-    let r = basic_compute_response(&credentials.username, &credentials.password);
-    format!("Basic {}", r)
-}
-
-fn get_auth_digest_response(
-    credentials: Credentials,
-    uri: &Uri,
-    method: &Method,
-    info: ProxyDigestInfo,
-    nc: u32,
-) -> String {
-    let uri = format!(
-        "{}",
-        (if method == Method::CONNECT {
-            uri.authority().map(|x| x.as_str()).unwrap()
-        } else {
-            uri.path()
-        })
-    );
-    let cnonce = generate_rand_hex(32);
-
-    let s = digest_compute_response(
-        &credentials.username,
-        &credentials.password,
-        info.realm.as_deref().unwrap(),
-        info.algorithm.as_deref(),
-        info.nonce.as_deref().unwrap(),
-        &cnonce,
-        nc,
-        info.qop.as_deref(),
-        method.as_str(),
-        &uri,
-    );
-
-    let mut response = format!(
-        "Digest username=\"{}\", realm=\"{}\", nonce=\"{}\", uri=\"{}\", ",
-        &credentials.username,
-        info.realm.as_deref().unwrap(),
-        info.nonce.as_deref().unwrap(),
-        uri
-    );
-    if let Some(x) = info.qop {
-        response += format!("cnonce=\"{}\", nc={:08x}, qop={}, ", cnonce, nc, x).as_str();
-    }
-    if let Some(x) = info.opaque {
-        response += format!("opaque=\"{}\", ", x).as_str();
-    }
-    response += format!("response=\"{}\"", s).as_str();
-    response
-}
-
-pub fn get_proxy_auth_info(s: &str) -> ProxyAuthentication {
-    let (tauth, v) = split_once(&s, " ").unwrap();
-
-    match tauth {
-        "Digest" => {
-            let mut digest = ProxyDigestInfo {
-                realm: None,
-                domain: None,
-                uri: None,
-                nonce: None,
-                opaque: None,
-                stale: None,
-                algorithm: None,
-                qop: None,
-            };
-
-            for spec in v.split(",").map(|x| x.trim()) {
-                let (key, value) = split_once(&spec, "=").unwrap();
-                let v = value.replace("\"", "");
-
-                match key {
-                    "realm" => digest.realm = Some(v),
-                    "domain" => digest.domain = Some(v),
-                    "uri" => digest.uri = Some(v),
-                    "nonce" => digest.nonce = Some(v),
-                    "opaque" => digest.opaque = Some(v),
-                    "stale" => digest.stale = Some(v),
-                    "algorithm" => digest.algorithm = Some(v),
-                    "qop" => digest.qop = Some(v),
-                    _ => (), // log: WARNING unspected proxy value
-                }
+                req.headers_mut().insert(
+                    PROXY_AUTHORIZATION,
+                    format!("Basic {}", STANDARD.encode(cred)).parse().unwrap(),
+                );
             }
+            ProxyAuthentication::Digest(www_authenticate) => {
+                let uri = req.uri().to_string();
+                let method = req.method().to_string();
 
-            ProxyAuthentication::Digest(digest)
+                let context = AuthContext::new_with_method(
+                    &credentials.username,
+                    &credentials.password,
+                    &uri,
+                    Option::<&'_ [u8]>::None,
+                    digest_auth::HttpMethod::from(method),
+                );
+                let mut prompt = digest_auth::parse(www_authenticate).unwrap();
+                let response = prompt.respond(&context);
+
+                req.headers_mut().insert(
+                    PROXY_AUTHORIZATION,
+                    response.unwrap().to_header_string().parse().unwrap(),
+                );
+            }
+            _ => (),
         }
-        "Basic" => ProxyAuthentication::Basic,
-        _ => ProxyAuthentication::Unknown,
+
+        Ok(())
+    }
+
+    pub fn get_auth_info<T>(
+        response: &Response<T>,
+    ) -> Result<ProxyAuthentication, hyper::header::ToStrError> {
+        let data = match response.headers().get(PROXY_AUTHENTICATE) {
+            Some(d) => d.to_str()?,
+            None => return Ok(ProxyAuthentication::None),
+        };
+
+        let (auth, _) = split_once(&data, " ").unwrap();
+
+        Ok(match auth {
+            "Digest" => ProxyAuthentication::Digest(data.into()),
+            "Basic" => ProxyAuthentication::Basic,
+            _ => ProxyAuthentication::Unknown,
+        })
     }
 }

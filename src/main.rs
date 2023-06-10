@@ -3,14 +3,9 @@ use clap::{Arg, ArgAction, Command, ValueHint};
 
 mod core {
     pub mod app;
-    pub mod client;
+    pub mod http;
     pub mod proxy;
     pub mod utils;
-    pub mod transparent;
-    pub mod auth {
-        pub mod basic;
-        pub mod digest;
-    }
 }
 
 use crate::core::app::App;
@@ -90,9 +85,14 @@ fn main() {
 
     // Load configuration file
     let mut config = Ini::new();
-    if let Err(e) = config.load(matches.get_one::<String>("file").unwrap()) {
-        error!("Error loading configuration file: {}", e);
-        std::process::exit(1);
+    
+    {
+        let path = matches.get_one::<String>("file").unwrap();
+        if let Err(e) = config.load(path) {
+            error!("Error loading configuration file: {}", e);
+            std::process::exit(1);
+        }
+        info!("Successful loaded configuration file from {}", path)
     }
 
     // Main Logic

@@ -1,18 +1,17 @@
-use super::client::ProxyClient;
+use super::http::ProxyHttp;
 use super::proxy::{Credentials, Proxy};
 
-use tokio::{self, net::TcpListener, signal, sync::oneshot};
+use tokio::{self, signal};
 
 use hyper::{
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
-    server::conn::{AddrStream, Http},
+    server::conn::{AddrStream},
     service::{make_service_fn, service_fn},
     Body, HeaderMap, Request, Response, Server, StatusCode, Uri,
 };
 
 use configparser::ini::Ini;
-use log::{debug, error, info, trace, warn};
-use std::os::fd::AsRawFd;
+use log::{debug, error, info, trace};
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -41,27 +40,27 @@ impl FromStr for OperationMode {
     }
 }
 
-macro_rules! try_or_log {
-    ($x:expr, $s:literal) => {
-        match $x {
-            Ok(v) => v,
-            Err(e) => {
-                error!($s, e);
-                return;
-            }
-        }
-    };
+// macro_rules! try_or_log {
+//     ($x:expr, $s:literal) => {
+//         match $x {
+//             Ok(v) => v,
+//             Err(e) => {
+//                 error!($s, e);
+//                 return;
+//             }
+//         }
+//     };
 
-    ($lv:ident, $x:expr, $s:literal) => {
-        match $x {
-            Ok(v) => v,
-            Err(e) => {
-                $lv!($s, e);
-                return;
-            }
-        }
-    };
-}
+//     ($lv:ident, $x:expr, $s:literal) => {
+//         match $x {
+//             Ok(v) => v,
+//             Err(e) => {
+//                 $lv!($s, e);
+//                 return;
+//             }
+//         }
+//     };
+// }
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -174,7 +173,7 @@ impl App {
         }
 
         // Forward the request
-        let client = ProxyClient::new(id, context.proxies, context.bypass);
+        let client = ProxyHttp::new(id, context.proxies, context.bypass);
         let res = match client.request(req).await {
             Ok(v) => v,
             Err(e) => {
@@ -219,7 +218,7 @@ impl App {
 
     pub async fn run(self) -> Result<(), String> {
         // Separate to avoid add more logic
-        if matches!(self.context.mode, OperationMode::Proxy) {
+        if matches!(self.context.mode, OperationMode::Transparent) {
             todo!();
         }
 
