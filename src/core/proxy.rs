@@ -9,10 +9,10 @@ use digest_auth::AuthContext;
 use std::io::{self, Error, ErrorKind};
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum ProxyAuthentication<'a> {
+pub enum ProxyAuthentication {
     Unknown,
     Basic,
-    Digest(&'a str),
+    Digest(digest_auth::WwwAuthenticateHeader),
     None,
 }
 
@@ -32,7 +32,7 @@ pub struct Proxy {
 impl Proxy {
     pub fn add_authentication_headers<B>(
         &self,
-        authentication: ProxyAuthentication,
+        authentication: &mut ProxyAuthentication,
         req: &mut Request<B>,
     ) -> io::Result<()> {
         let credentials = (&self.credentials).as_ref().ok_or(Error::new(
@@ -49,7 +49,7 @@ impl Proxy {
                     format!("Basic {}", STANDARD.encode(cred)).parse().unwrap(),
                 );
             }
-            ProxyAuthentication::Digest(www_authenticate) => {
+            ProxyAuthentication::Digest(ref mut prompt) => {
                 let uri = req.uri().to_string();
                 let method = req.method().to_string();
 
@@ -60,7 +60,6 @@ impl Proxy {
                     Option::<&'_ [u8]>::None,
                     digest_auth::HttpMethod::from(method),
                 );
-                let mut prompt = digest_auth::parse(www_authenticate).unwrap();
                 let response = prompt.respond(&context);
 
                 req.headers_mut().insert(
@@ -84,8 +83,9 @@ impl Proxy {
 
         let (auth, _) = split_once(&data, " ").unwrap();
 
+        // TODO: remove this unwrap
         Ok(match auth {
-            "Digest" => ProxyAuthentication::Digest(data.into()),
+            "Digest" => ProxyAuthentication::Digest(digest_auth::parse(data).unwrap()),
             "Basic" => ProxyAuthentication::Basic,
             _ => ProxyAuthentication::Unknown,
         })

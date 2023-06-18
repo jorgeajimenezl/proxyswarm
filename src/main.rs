@@ -85,7 +85,7 @@ fn main() {
 
     // Load configuration file
     let mut config = Ini::new();
-    
+
     {
         let path = matches.get_one::<String>("file").unwrap();
         if let Err(e) = config.load(path) {

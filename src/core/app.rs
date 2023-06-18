@@ -1,17 +1,22 @@
-use super::http::ProxyHttp;
+use super::http::{empty, ProxyHttp};
 use super::proxy::{Credentials, Proxy};
 
-use tokio::{self, signal};
+use tokio::net::TcpListener;
+use tokio::{self, signal, sync::oneshot};
 
+use http_body_util::combinators::BoxBody;
 use hyper::{
+    body::{Bytes, Incoming},
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
-    server::conn::{AddrStream},
-    service::{make_service_fn, service_fn},
-    Body, HeaderMap, Request, Response, Server, StatusCode, Uri,
+    server::conn::http1,
+    service::service_fn,
+    HeaderMap, Request, Response, StatusCode, Uri,
 };
 
 use configparser::ini::Ini;
 use log::{debug, error, info, trace};
+use std::io::Error;
+
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -39,28 +44,6 @@ impl FromStr for OperationMode {
         }
     }
 }
-
-// macro_rules! try_or_log {
-//     ($x:expr, $s:literal) => {
-//         match $x {
-//             Ok(v) => v,
-//             Err(e) => {
-//                 error!($s, e);
-//                 return;
-//             }
-//         }
-//     };
-
-//     ($lv:ident, $x:expr, $s:literal) => {
-//         match $x {
-//             Ok(v) => v,
-//             Err(e) => {
-//                 $lv!($s, e);
-//                 return;
-//             }
-//         }
-//     };
-// }
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -154,14 +137,9 @@ impl App {
 
     async fn handle_connection(
         context: AppContext,
-        addr: SocketAddr,
-        count: Arc<AtomicU32>,
-        mut req: Request<Body>,
-    ) -> Result<Response<Body>, Infallible> {
-        // Get connections count
-        let id = count.fetch_add(1, Ordering::SeqCst);
-
-        debug!("[#{}] Incoming connection: <{}>", id, addr);
+        id: u32,
+        mut req: Request<Incoming>,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
         debug!("[#{}] Requested: {}", id, req.uri());
         trace!("[#{}] Request struct: {:?}", id, req);
 
@@ -179,8 +157,8 @@ impl App {
             Err(e) => {
                 error!("Error forwarding request to destination: {}", e);
                 return Ok(Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(Body::empty())
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(empty())
                     .unwrap());
             }
         };
@@ -189,31 +167,58 @@ impl App {
         return Ok(res);
     }
 
-    async fn serve_http(context: AppContext) -> Result<(), hyper::Error> {
+    async fn serve_http(context: AppContext) -> Result<(), Error> {
         let addr = context.addr.clone();
         let count = Arc::new(AtomicU32::new(0));
-        let make_service = make_service_fn(move |conn: &AddrStream| {
-            let count = count.clone();
-            let context = context.clone();
-            let addr = conn.remote_addr();
 
-            let service = service_fn(move |req| {
-                App::handle_connection(context.clone(), addr, count.clone(), req)
-            });
-
-            async move { Ok::<_, Infallible>(service) }
-        });
-        let server = Server::bind(&addr).serve(make_service);
+        let tcp_listener = TcpListener::bind(addr).await?;
         info!(
             "Proxy listening at http://{}. Press Ctrl+C to stop it",
             addr
         );
-        let graceful = server.with_graceful_shutdown(async {
-            signal::ctrl_c()
-                .await
-                .expect("Failed to install CTRL+C signal handler");
+
+        let (tx, mut rx) = oneshot::channel();
+
+        // Main loop
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    conn = tcp_listener.accept() => {
+                        let (stream, remote_addr) = match conn {
+                            Ok(v) => v,
+                            Err(e) => {
+                                error!("Unable to accept incomming TCP connection: {}", e);
+                                return;
+                            }
+                        };
+
+                        // Get connections count
+                        let id = count.fetch_add(1, Ordering::SeqCst);
+                        debug!("[#{}] Incoming connection: <{}>", id, remote_addr);
+
+                        let context = context.clone();
+                        let proxy =
+                            service_fn(move |req| App::handle_connection(context.clone(), id, req));
+
+                        tokio::spawn(async move {
+                            if let Err(e) = http1::Builder::new()
+                                    .keep_alive(true)
+                                    .preserve_header_case(true)
+                                    .serve_connection(stream, proxy)
+                                    .with_upgrades()
+                                    .await {
+                                error!("Server error: {}", e);
+                            }
+                        });
+                    }
+                    _ = (&mut rx) => { break; }
+                }
+            }
         });
-        Ok(graceful.await?)
+
+        signal::ctrl_c().await?;
+        let _ = tx.send(());
+        Ok(())
     }
 
     pub async fn run(self) -> Result<(), String> {
