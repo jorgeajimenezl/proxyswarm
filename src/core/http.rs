@@ -368,7 +368,7 @@ impl ProxyHttp {
                             .map_err(|e| io_err::<hyper::header::ToStrError>(e.into()))?
                         {
                             let r = i.stale == false;
-                            auth_info = ProxyAuthentication::Digest(i);
+                            // auth_info = ProxyAuthentication::Digest(i);
                             r
                         } else {
                             error!(

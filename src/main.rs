@@ -1,5 +1,7 @@
 extern crate clap;
-use clap::{Arg, ArgAction, Command, ValueHint};
+use clap::{
+    crate_authors, crate_description, crate_name, crate_version, Arg, ArgAction, Command, ValueHint,
+};
 
 mod core {
     pub mod app;
@@ -24,10 +26,10 @@ static DEFAULT_CONFIGURATION_FILE_PATH: &str = "/etc/proxyswarm.conf";
 static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
 
 fn main() {
-    let matches = Command::new("proxyswarm")
-                        .version("0.2.0")
-                        .author("Jorge A. Jiménez Luna <jorgeajimenezl17@gmail.com>")
-                        .about("Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.")
+    let matches = Command::new(crate_name!())
+                        .version(crate_version!())
+                        .author(crate_authors!("\n"))
+                        .about(crate_description!())
                         .arg(Arg::new("verbose")
                             .long("verbose")
                             .short('v')

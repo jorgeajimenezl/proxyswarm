@@ -4,23 +4,13 @@
 ![GitHub tag](https://img.shields.io/github/v/tag/jorgeajimenezl/proxyswarm)
 ![AUR version](https://img.shields.io/aur/version/proxyswarm)
 
-Proxyswarm is a lightweight proxy that allows redirect HTTP(S) traffic through a proxy.
-
-> **Warning**
->
-> This app isn't recomended for download large files, for these things use apps like [curl](#how-download-a-file-with-curl-using-proxy), wget or other download programs. For web browse use standard web browser like Chromium and Firefox, these apps and others have good proxy support.
->
-> **USE THIS APP WITH PROGRAMS WITHOUT PROXY SUPPORT LIKE STEAM, PIP, ETC**
+Proxyswarm is a lightweight proxy that allows redirect HTTP[S] traffic through a proxy.
 
 ## Features
 
 - **High performace** (built using `tokio.rs`)
 - **Multiple connections** at same time
 - **HTTP[S] Proxy**
-
-> **Note**
->
-> Use HTTP mode if you are going to use it only locally.
 
 ## Authentication schemes supported
 
