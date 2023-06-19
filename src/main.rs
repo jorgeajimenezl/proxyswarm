@@ -1,4 +1,6 @@
 extern crate clap;
+use std::net::SocketAddr;
+
 use clap::{
     crate_authors, crate_description, crate_name, crate_version, Arg, ArgAction, Command, ValueHint,
 };
@@ -11,7 +13,6 @@ mod core {
 }
 
 use crate::core::app::App;
-use configparser::ini::Ini;
 use log::{error, info, LevelFilter};
 use log4rs::{
     append::console::{ConsoleAppender, Target},
@@ -27,33 +28,76 @@ static DEFAULT_CONFIGURATION_FILE_PATH: &str = "./proxyswarm.conf";
 
 fn main() {
     let matches = Command::new(crate_name!())
-                        .version(crate_version!())
-                        .author(crate_authors!("\n"))
-                        .about(crate_description!())
-                        .arg(Arg::new("verbose")
-                            .long("verbose")
-                            .short('v')
-                            .action(ArgAction::Count)
-                            .help("Sets the level of verbosity"))
-                        .arg(Arg::new("quiet")
-                            .long("quiet")
-                            .short('q')
-                            .conflicts_with("verbose")
-                            .action(ArgAction::SetTrue)
-                            .help("Enable quiet mode"))
-                        .arg(Arg::new("file")
-                            .long("file")
-                            .short('f')
-                            .default_value(DEFAULT_CONFIGURATION_FILE_PATH)
-                            .action(ArgAction::Set)
-                            .value_hint(ValueHint::FilePath)
-                            .help("Path to configuration file."))
-                        .arg(Arg::new("test-file")
-                            .long("test-file")
-                            .short('t')
-                            .action(ArgAction::SetTrue)
-                            .help("Check the syntax of configuration file and exit."))
-                        .get_matches();
+        .version(crate_version!())
+        .author(crate_authors!("\n"))
+        .about(crate_description!())
+        .arg(
+            Arg::new("verbose")
+                .long("verbose")
+                .short('v')
+                .action(ArgAction::Count)
+                .help("Sets the level of verbosity"),
+        )
+        .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .short('q')
+                .conflicts_with("verbose")
+                .action(ArgAction::SetTrue)
+                .help("Enable quiet mode"),
+        )
+        .arg(
+            Arg::new("proxy")
+                .long("proxy")
+                .short('p')
+                .action(ArgAction::Set)
+                .value_name("[proto://]host:port")
+                .help("Uri of the proxy"),
+        )
+        .arg(
+            Arg::new("credentials")
+                .long("credentials")
+                .short('c')
+                .action(ArgAction::Set)
+                .value_name("user:pass")
+                .help("Credentials for authenticate"),
+        )
+        .arg(
+            Arg::new("mode")
+                .long("mode")
+                .short('m')
+                .action(ArgAction::Set)
+                .value_parser(["proxy", "transparent"])
+                .ignore_case(true)
+                .default_value("proxy")
+                .help("Work mode"),
+        )
+        .arg(
+            Arg::new("bind-address")
+                .long("bind-address")
+                .short('b')
+                .action(ArgAction::Set)
+                .value_parser(str::parse::<SocketAddr>)
+                .value_name("ip:port")
+                .help("Address to listen connections"),
+        )
+        .arg(
+            Arg::new("baypass")
+                .long("baypass")
+                .short('a')
+                .action(ArgAction::Append)
+                .help("Avoid to send to proxy this dst"),
+        )
+        .arg(
+            Arg::new("file")
+                .long("file")
+                .short('f')
+                .action(ArgAction::Set)
+                .default_value(DEFAULT_CONFIGURATION_FILE_PATH)
+                .value_hint(ValueHint::FilePath)
+                .help("Path to configuration file"),
+        )
+        .get_matches();
 
     let level = match matches.get_count("verbose") {
         _ if matches.get_flag("quiet") => LevelFilter::Off,
@@ -86,30 +130,57 @@ fn main() {
     info!("Application started");
 
     // Load configuration file
-    let mut config = Ini::new();
-
-    {
+    let config = {
         let path = matches.get_one::<String>("file").unwrap();
-        if let Err(e) = config.load(path) {
-            error!("Error loading configuration file: {}", e);
-            std::process::exit(1);
+        let credentials = matches.get_one::<String>("credentials");
+
+        match config::Config::builder()
+            .add_source(config::Environment::with_prefix(crate_name!()))
+            .add_source(config::File::new(path, config::FileFormat::Ini))
+            .set_override_option("proxy.uri", matches.get_one::<String>("proxy").cloned())
+            .unwrap()
+            .set_override_option("proxy.username", credentials.map(|x| x.split(":").nth(0)))
+            .unwrap()
+            .set_override_option("proxy.password", credentials.map(|x| x.split(":").nth(1)))
+            .unwrap()
+            .set_override_option("proxy.mode", matches.get_one::<String>("mode").cloned())
+            .unwrap()
+            .set_override_option::<_, String>(
+                "general.bind-address",
+                matches
+                    .get_one::<SocketAddr>("bind-address")
+                    .cloned()
+                    .map(|v| v.to_string()),
+            )
+            .unwrap()
+            .set_override_option(
+                "general.baypass",
+                matches
+                    .get_many::<String>("baypass")
+                    .map(|v| v.cloned().collect::<Vec<_>>()),
+            )
+            .unwrap()
+            .build()
+        {
+            Ok(v) => {
+                info!("Successful loaded configuration file from {}", path);
+                v
+            }
+            Err(e) => {
+                error!("Error loading configuration file: {}", e);
+                std::process::exit(1);
+            }
         }
-        info!("Successful loaded configuration file from {}", path)
-    }
+    };
 
     // Main Logic
-    let app = match App::from_config(&config) {
+    let app = match App::from_config(config) {
         Ok(v) => v,
         Err(e) => {
             error!("{}", e);
             std::process::exit(1);
         }
     };
-
-    if matches.get_flag("test-file") {
-        info!("Configuration file OK :)");
-        std::process::exit(0);
-    }
 
     do_work(app);
 }

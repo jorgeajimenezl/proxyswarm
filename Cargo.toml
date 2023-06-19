@@ -17,7 +17,6 @@ libc = "0.2"
 clap = { version = "4.3.4", features = ["cargo"] }
 md5 = "0.7.0"
 bytes = "1.4.0"
-configparser = "3.0.2"
 log4rs = "1.2.0"
 log = "0.4.17"
 rand = "0.8.5"
@@ -26,3 +25,4 @@ base64 = "0.21.2"
 hyper = { version = "1.0.0-rc.3", features = ["full"] }
 tokio = { version = "1.25.0", features = ["full"] }
 http-body-util = "0.1.0-rc.2"
+config = { version = "0.13.3", default-features = false, features = ["ini"] }

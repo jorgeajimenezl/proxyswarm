@@ -13,7 +13,7 @@ use hyper::{
     HeaderMap, Request, Response, StatusCode, Uri,
 };
 
-use configparser::ini::Ini;
+use config::Config;
 use log::{debug, error, info, trace};
 use std::io::Error;
 
@@ -58,41 +58,50 @@ pub struct App {
 }
 
 impl App {
-    fn build_appcontext(config: &Ini) -> Result<AppContext, String> {
+    fn build_appcontext(
+        config: Config,
+    ) -> Result<AppContext, Box<dyn std::error::Error + Send + Sync>> {
         let mut proxies = Vec::new();
-        let bypass = config
-            .get("general", "bypass")
-            .unwrap_or(String::from("127.0.0.1"))
-            .split(",")
-            .map(|x| String::from(x))
-            .collect();
+        let mut bypass = Vec::new();
+
+        for value in config
+            .get_array("general.bypass")
+            .unwrap_or(vec!["127.0.0.1".into()])
+        {
+            bypass.push(value.into_string()?);
+        }
 
         let mode = config
-            .get("general", "mode")
+            .get_string("general.mode")
             .unwrap_or(String::from("proxy"))
             .parse::<OperationMode>()?;
 
         // Get the proxies
-        let mut sessions = Vec::new();
-        for (k, _) in config.get_map_ref() {
-            if k.to_lowercase().ends_with("proxy") {
-                sessions.push(k);
-            }
-        }
-        for k in sessions {
-            let username = config.get(k, "username");
-            let password = config.get(k, "password");
-            let uri = config
-                .get(k, "uri")
-                .ok_or("Missing uri field in proxy session")?;
+        let proxy = {
+            let username = match config.get("proxy.username") {
+                Ok(v) => Some(v),
+                Err(e) => match e {
+                    config::ConfigError::NotFound(_) => None,
+                    _ => return Err(e.into()),
+                },
+            };
+            let password = match config.get("proxy.password") {
+                Ok(v) => Some(v),
+                Err(e) => match e {
+                    config::ConfigError::NotFound(_) => None,
+                    _ => return Err(e.into()),
+                },
+            };
+            let uri = config.get_string("proxy.uri")?;
 
             if (username != None && password == None) || (username == None && password != None) {
                 return Err(String::from(
                     "The proxy session must include username and password or neither",
-                ));
+                )
+                .into());
             }
 
-            let proxy = Proxy {
+            Proxy {
                 uri: Uri::from_str(&uri).map_err(|e| format!("Error parsing proxy uri: {}", e))?,
                 headers: HeaderMap::new(),
                 credentials: if username == None {
@@ -103,23 +112,15 @@ impl App {
                         password: password.unwrap(),
                     })
                 },
-            };
+            }
+        };
 
-            proxies.push(proxy);
-        }
-
-        let listen_addr = SocketAddr::new(
-            config
-                .get("general", "bind-address")
-                .unwrap_or(String::from("0.0.0.0"))
-                .parse()
-                .map_err(|e| format!("Error parsing address interface to bind the app: {}", e))?,
-            config
-                .get("general", "bind-port")
-                .unwrap_or(String::from("3128"))
-                .parse::<u16>()
-                .map_err(|e| format!("Error parsing port to bind the app: {}", e))?,
-        );
+        proxies.push(proxy);
+        
+        let listen_addr: SocketAddr = config
+            .get_string("general.bind-address")
+            .unwrap_or(String::from("0.0.0.0:8081"))
+            .parse()?;
 
         Ok(AppContext {
             addr: listen_addr,
@@ -129,7 +130,7 @@ impl App {
         })
     }
 
-    pub fn from_config(config: &Ini) -> Result<Self, String> {
+    pub fn from_config(config: Config) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         Ok(App {
             context: App::build_appcontext(config)?,
         })
