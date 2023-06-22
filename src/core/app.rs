@@ -225,7 +225,7 @@ impl App {
     pub async fn run(self) -> Result<(), String> {
         // Separate to avoid add more logic
         if matches!(self.context.mode, OperationMode::Transparent) {
-            todo!();
+            todo!("Wait a little more :(");
         }
 
         App::serve_http(self.context)

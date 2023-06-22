@@ -86,7 +86,7 @@ fn main() {
                 .long("baypass")
                 .short('a')
                 .action(ArgAction::Append)
-                .help("Avoid to send to proxy this dst"),
+                .help("Avoid proxify the request with these destinations"),
         )
         .arg(
             Arg::new("file")
@@ -143,7 +143,7 @@ fn main() {
             .unwrap()
             .set_override_option("proxy.password", credentials.map(|x| x.split(":").nth(1)))
             .unwrap()
-            .set_override_option("proxy.mode", matches.get_one::<String>("mode").cloned())
+            .set_override_option("general.mode", matches.get_one::<String>("mode").cloned())
             .unwrap()
             .set_override_option::<_, String>(
                 "general.bind-address",
