@@ -1,4 +1,4 @@
-name: Rust
+name: Build and publish
 
 on:
   push:
@@ -30,9 +30,15 @@ jobs:
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose --release
-
     - name: Archive binary file
       uses: actions/upload-artifact@v3
       with:
         name: proxyswarm-x86_64-${{ matrix.name }}
         path: target/release/proxyswarm${{ matrix.extension }}
+    - name: Publish
+      uses: softprops/action-gh-release@v1
+      with:
+        draft: false
+        prerelease: true
+        files: target/release/proxyswarm${{ matrix.extension }}
+
