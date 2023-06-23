@@ -26,3 +26,5 @@ hyper = { version = "1.0.0-rc.3", features = ["full"] }
 tokio = { version = "1.25.0", features = ["full"] }
 http-body-util = "0.1.0-rc.2"
 config = { version = "0.13.3", default-features = false, features = ["ini"] }
+thiserror = "1.0.40"
+http = "0.2.9"

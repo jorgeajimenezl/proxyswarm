@@ -5,14 +5,13 @@ use clap::{
     crate_authors, crate_description, crate_name, crate_version, Arg, ArgAction, Command, ValueHint,
 };
 
-mod core {
-    pub mod app;
-    pub mod http;
-    pub mod proxy;
-    pub mod utils;
-}
+pub mod app;
+pub mod http;
+pub mod proxy;
+pub mod utils;
+pub mod error;
 
-use crate::core::app::App;
+use crate::app::App;
 use log::{error, info, LevelFilter};
 use log4rs::{
     append::console::{ConsoleAppender, Target},
@@ -103,7 +102,7 @@ fn main() {
         _ if matches.get_flag("quiet") => LevelFilter::Off,
         0 => LevelFilter::Info,
         1 => LevelFilter::Debug,
-        2 | _ => LevelFilter::Trace,
+        _ => LevelFilter::Trace,
     };
 
     // Build a stdout logger.
@@ -139,9 +138,9 @@ fn main() {
             .add_source(config::File::new(path, config::FileFormat::Ini))
             .set_override_option("proxy.uri", matches.get_one::<String>("proxy").cloned())
             .unwrap()
-            .set_override_option("proxy.username", credentials.map(|x| x.split(":").nth(0)))
+            .set_override_option("proxy.username", credentials.map(|x| x.split(':').next()))
             .unwrap()
-            .set_override_option("proxy.password", credentials.map(|x| x.split(":").nth(1)))
+            .set_override_option("proxy.password", credentials.map(|x| x.split(':').nth(1)))
             .unwrap()
             .set_override_option("general.mode", matches.get_one::<String>("mode").cloned())
             .unwrap()

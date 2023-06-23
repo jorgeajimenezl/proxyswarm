@@ -10,13 +10,14 @@ use hyper::{
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
     server::conn::http1,
     service::service_fn,
-    HeaderMap, Request, Response, StatusCode, Uri,
+    Request, Response, StatusCode, Uri,
 };
 
 use config::Config;
 use log::{debug, error, info, trace};
 use std::io::Error;
 
+use std::sync::Mutex;
 use std::{
     convert::Infallible,
     net::SocketAddr,
@@ -51,6 +52,8 @@ pub struct AppContext {
     pub proxies: Vec<Proxy>,
     pub bypass: Vec<String>,
     pub mode: OperationMode,
+    
+    digest_state: Arc<Mutex<crate::http::DigestState>>
 }
 
 pub struct App {
@@ -94,7 +97,7 @@ impl App {
             };
             let uri = config.get_string("proxy.uri")?;
 
-            if (username != None && password == None) || (username == None && password != None) {
+            if (username.is_some() && password.is_none()) || (username.is_none() && password.is_some()) {
                 return Err(String::from(
                     "The proxy session must include username and password or neither",
                 )
@@ -103,8 +106,7 @@ impl App {
 
             Proxy {
                 uri: Uri::from_str(&uri).map_err(|e| format!("Error parsing proxy uri: {}", e))?,
-                headers: HeaderMap::new(),
-                credentials: if username == None {
+                credentials: if username.is_none() {
                     None
                 } else {
                     Some(Credentials {
@@ -116,7 +118,7 @@ impl App {
         };
 
         proxies.push(proxy);
-        
+
         let listen_addr: SocketAddr = config
             .get_string("general.bind-address")
             .unwrap_or(String::from("0.0.0.0:8081"))
@@ -127,6 +129,7 @@ impl App {
             mode,
             proxies,
             bypass,
+            digest_state: Default::default(),
         })
     }
 
@@ -152,7 +155,12 @@ impl App {
         }
 
         // Forward the request
-        let client = ProxyHttp::new(id, context.proxies, context.bypass);
+        let client = ProxyHttp::new(
+            id,
+            context.proxies,
+            context.bypass,
+            Arc::clone(&context.digest_state), 
+        );
         let res = match client.request(req).await {
             Ok(v) => v,
             Err(e) => {
@@ -165,11 +173,11 @@ impl App {
         };
 
         debug!("[#{}] Connection processed successful", id);
-        return Ok(res);
+        Ok(res)
     }
 
     async fn serve_http(context: AppContext) -> Result<(), Error> {
-        let addr = context.addr.clone();
+        let addr = context.addr;
         let count = Arc::new(AtomicU32::new(0));
 
         let tcp_listener = TcpListener::bind(addr).await?;

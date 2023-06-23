@@ -3,14 +3,6 @@ static BYTES_SUFFIX: ([&str; 8], [&str; 8]) = (
     ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"],
 );
 
-pub fn split_once<'a>(s: &'a str, pattern: &str) -> Option<(&'a str, &'a str)> {
-    let n = s.find(pattern)?;
-    if n - 1 >= s.len() {
-        return None;
-    }
-    Some((&s[..n], &s[n + pattern.len()..]))
-}
-
 pub fn natural_size(bytes: u64, binary: bool) -> String {
     let base = if binary { 1024 } else { 1000 };
     let suffix = if binary {

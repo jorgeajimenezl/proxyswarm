@@ -799,6 +799,7 @@ dependencies = [
  "clap",
  "config",
  "digest_auth",
+ "http",
  "http-body-util",
  "hyper",
  "libc",
@@ -806,6 +807,7 @@ dependencies = [
  "log4rs",
  "md5",
  "rand",
+ "thiserror",
  "tokio",
 ]
 
