@@ -1,3 +1,5 @@
+use super::proxy::{AuthenticationScheme, Proxy};
+use super::utils::natural_size;
 use crate::error::Error;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty};
@@ -20,19 +22,6 @@ use tokio::{
     sync::oneshot::{self, Receiver},
 };
 
-pub type DigestState = Option<digest_auth::WwwAuthenticateHeader>;
-
-#[derive(Clone)]
-pub struct ProxyHttp {
-    pub(crate) rid: u32,
-    pub(crate) proxies: Vec<Proxy>,
-    pub(crate) bypass: Vec<String>,
-    pub(crate) digest_state: Arc<Mutex<DigestState>>,
-}
-
-use super::proxy::{AuthenticationScheme, Proxy};
-use super::utils::natural_size;
-
 macro_rules! box_body {
     ($t:expr) => {
         $t.map(|f| f.boxed())
@@ -44,6 +33,16 @@ pub(crate) fn empty() -> BoxBody<Bytes, hyper::Error> {
     Empty::<Bytes>::new()
         .map_err(|never| match never {})
         .boxed()
+}
+
+pub type DigestState = Option<digest_auth::WwwAuthenticateHeader>;
+
+#[derive(Clone)]
+pub struct ProxyHttp {
+    pub(crate) rid: u32,
+    pub(crate) proxies: Vec<Proxy>,
+    pub(crate) bypass: Vec<String>,
+    pub(crate) digest_state: Arc<Mutex<DigestState>>,
 }
 
 async fn create_stream(uri: &Uri) -> Result<TcpStream, Error> {
@@ -259,7 +258,7 @@ impl ProxyHttp {
         }
 
         for proxy in self.proxies.iter() {
-            let Ok((mut sender, conn)) = self.get_proxy_transport(&proxy).await else {
+            let Ok((mut sender, conn)) = self.get_proxy_transport(proxy).await else {
                 continue;
             };
 
@@ -349,7 +348,7 @@ impl ProxyHttp {
                     tx.send(()).unwrap();
 
                     // Build a new proxy connection
-                    let t = self.get_proxy_transport(&proxy).await?;
+                    let t = self.get_proxy_transport(proxy).await?;
                     sender = t.0;
                     let id = self.rid;
 

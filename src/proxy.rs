@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::error::Error;
-use hyper::{header::PROXY_AUTHENTICATE, Response};
+use hyper::{header::PROXY_AUTHENTICATE, http::uri, Response};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum AuthenticationScheme {
@@ -58,31 +58,48 @@ impl FromStr for Proxy {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let url = url::Url::parse(s).map_err(|_| format!("`{s}` is not a valid proxy URL"))?;
+        let url = uri::Uri::from_str(s).map_err(|_| format!("`{s}` is not a valid proxy URL"))?;
 
-        let scheme = url.scheme();
-        let kind = match ["http", "https"]
-            .iter()
-            .position(|x| x.eq_ignore_ascii_case(scheme))
-            .ok_or(format!("`{scheme}` proxy scheme is not accepted"))?
-        {
-            0 => ProxyType::Http,
-            1 => ProxyType::Https,
-            _ => todo!(),
+        let kind = match url.scheme_str() {
+            Some(scheme) => match scheme {
+                "http" => ProxyType::Http,
+                "https" => ProxyType::Https,
+                _ => return Err(format!("`{scheme}` proxy scheme is not accepted").into()),
+            },
+            None => ProxyType::Http,
         };
 
-        let addr = url
-            .socket_addrs(|| None)?
-            .into_iter()
-            .next()
-            .ok_or(format!("`{s}` does not resolve to a usable IP address"))?;
+        let addr = match url.host() {
+            Some(host) => {
+                let port = url.port_u16().unwrap_or(match kind {
+                    ProxyType::Http => 80,
+                    ProxyType::Https => 443,
+                });
+                let mut iter = (host, port)
+                    .to_socket_addrs()
+                    .map_err(|_| format!("`{host}` could not be resolved"))?;
+                iter.next()
+                    .ok_or(format!("`{host}` does not resolve to a usable IP address"))?
+            }
+            _ => return Err(format!("`{s}` not contains host").into()),
+        };
 
-        let credentials = if url.username() == "" && url.password().is_none() {
-            None
-        } else {
-            let username = String::from(url.username());
-            let password = String::from(url.password().unwrap_or(""));
-            Some(Credentials { username, password })
+        let credentials = match url
+            .authority()
+            .and_then(|x| x.as_str().split_once('@'))
+            .map(|x| x.0)
+        {
+            Some(auth) => match auth.split_once(':') {
+                Some((u, p)) => Some(Credentials {
+                    username: u.to_string(),
+                    password: p.to_string(),
+                }),
+                None => Some(Credentials {
+                    username: auth.to_string(),
+                    password: String::from(""),
+                }),
+            },
+            None => None,
         };
 
         Ok(Proxy {
