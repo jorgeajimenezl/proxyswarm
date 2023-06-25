@@ -6,10 +6,10 @@ use clap::{
 };
 
 pub mod app;
+pub mod error;
 pub mod http;
 pub mod proxy;
 pub mod utils;
-pub mod error;
 
 use crate::app::App;
 use log::{error, info, LevelFilter};
@@ -50,16 +50,8 @@ fn main() {
                 .long("proxy")
                 .short('p')
                 .action(ArgAction::Set)
-                .value_name("[proto://]host:port")
+                .value_name("[proto://][username[:password]@]host:port")
                 .help("Uri of the proxy"),
-        )
-        .arg(
-            Arg::new("credentials")
-                .long("credentials")
-                .short('c')
-                .action(ArgAction::Set)
-                .value_name("user:pass")
-                .help("Credentials for authenticate"),
         )
         .arg(
             Arg::new("mode")
@@ -131,16 +123,11 @@ fn main() {
     // Load configuration file
     let config = {
         let path = matches.get_one::<String>("file").unwrap();
-        let credentials = matches.get_one::<String>("credentials");
 
         match config::Config::builder()
             .add_source(config::Environment::with_prefix(crate_name!()))
             .add_source(config::File::new(path, config::FileFormat::Ini))
             .set_override_option("proxy.uri", matches.get_one::<String>("proxy").cloned())
-            .unwrap()
-            .set_override_option("proxy.username", credentials.map(|x| x.split(':').next()))
-            .unwrap()
-            .set_override_option("proxy.password", credentials.map(|x| x.split(':').nth(1)))
             .unwrap()
             .set_override_option("general.mode", matches.get_one::<String>("mode").cloned())
             .unwrap()

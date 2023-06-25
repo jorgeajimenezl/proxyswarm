@@ -23,6 +23,12 @@ pub enum Error {
     #[error(transparent)]
     JoinError(#[from] JoinError),
 
+    #[error(transparent)]
+    InvalidUri(#[from] hyper::http::uri::InvalidUri),
+
+    #[error(transparent)]
+    ConfigurationFileError(#[from] config::ConfigError),
+
     #[error("This proxy need authentication")]
     AuthenticationRequired,
 }
@@ -30,5 +36,11 @@ pub enum Error {
 impl From<&str> for Error {
     fn from(err: &str) -> Self {
         Self::String(err.to_string())
+    }
+}
+
+impl From<String> for Error {
+    fn from(err: String) -> Self {
+        Self::String(err)
     }
 }

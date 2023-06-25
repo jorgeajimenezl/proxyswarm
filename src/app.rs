@@ -1,5 +1,6 @@
 use super::http::{empty, ProxyHttp};
 use super::proxy::{Credentials, Proxy};
+use crate::error::Error;
 
 use tokio::net::TcpListener;
 use tokio::{self, signal, sync::oneshot};
@@ -10,12 +11,11 @@ use hyper::{
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
     server::conn::http1,
     service::service_fn,
-    Request, Response, StatusCode, Uri,
+    Request, Response, StatusCode,
 };
 
 use config::Config;
 use log::{debug, error, info, trace};
-use std::io::Error;
 
 use std::sync::Mutex;
 use std::{
@@ -52,8 +52,8 @@ pub struct AppContext {
     pub proxies: Vec<Proxy>,
     pub bypass: Vec<String>,
     pub mode: OperationMode,
-    
-    digest_state: Arc<Mutex<crate::http::DigestState>>
+
+    digest_state: Arc<Mutex<crate::http::DigestState>>,
 }
 
 pub struct App {
@@ -61,9 +61,7 @@ pub struct App {
 }
 
 impl App {
-    fn build_appcontext(
-        config: Config,
-    ) -> Result<AppContext, Box<dyn std::error::Error + Send + Sync>> {
+    fn build_appcontext(config: Config) -> Result<AppContext, Error> {
         let mut proxies = Vec::new();
         let mut bypass = Vec::new();
 
@@ -97,24 +95,22 @@ impl App {
             };
             let uri = config.get_string("proxy.uri")?;
 
-            if (username.is_some() && password.is_none()) || (username.is_none() && password.is_some()) {
+            if (username.is_some() && password.is_none())
+                || (username.is_none() && password.is_some())
+            {
                 return Err(String::from(
                     "The proxy session must include username and password or neither",
                 )
                 .into());
             }
 
-            Proxy {
-                uri: Uri::from_str(&uri).map_err(|e| format!("Error parsing proxy uri: {}", e))?,
-                credentials: if username.is_none() {
-                    None
-                } else {
-                    Some(Credentials {
-                        username: username.unwrap(),
-                        password: password.unwrap(),
-                    })
-                },
-            }
+            let mut res = Proxy::from_str(&uri)?;
+            // overwrite the user pass
+            res.credentials = res.credentials.or(username.map(|username| Credentials {
+                username,
+                password: password.unwrap(),
+            }));
+            res
         };
 
         proxies.push(proxy);
@@ -122,7 +118,8 @@ impl App {
         let listen_addr: SocketAddr = config
             .get_string("general.bind-address")
             .unwrap_or(String::from("0.0.0.0:8081"))
-            .parse()?;
+            .parse()
+            .map_err(|e| format!("{e}"))?;
 
         Ok(AppContext {
             addr: listen_addr,
@@ -159,7 +156,7 @@ impl App {
             id,
             context.proxies,
             context.bypass,
-            Arc::clone(&context.digest_state), 
+            Arc::clone(&context.digest_state),
         );
         let res = match client.request(req).await {
             Ok(v) => v,

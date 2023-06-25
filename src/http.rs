@@ -196,9 +196,9 @@ impl ProxyHttp {
         Ok(box_body!(sender.send_request(box_body!(req)).await?))
     }
 
-    pub async fn get_transport(
+    pub async fn get_proxy_transport(
         &self,
-        uri: &Uri,
+        proxy: &Proxy,
     ) -> Result<
         (
             SendRequest<Empty<Bytes>>,
@@ -207,11 +207,11 @@ impl ProxyHttp {
         Error,
     > {
         // Try to connect with the proxy
-        let stream = match create_stream(uri).await {
+        let stream = match TcpStream::connect(proxy.addr).await {
             Ok(v) => v,
             Err(e) => {
-                warn!("[#{}] Proxy {} is unavailable: {}", self.rid, uri, e);
-                return Err(e);
+                warn!("[#{}] Proxy is unavailable: {}", self.rid, e);
+                return Err(e.into());
             }
         };
 
@@ -249,11 +249,7 @@ impl ProxyHttp {
         &self,
         mut req: Request<Incoming>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Error> {
-        let (uri, _method, _version) = (
-            req.uri().clone(),
-            req.method().clone(),
-            req.version().clone(),
-        );
+        let uri = req.uri().clone();
 
         {
             let host = &uri.host().unwrap_or_default().to_string();
@@ -263,7 +259,7 @@ impl ProxyHttp {
         }
 
         for proxy in self.proxies.iter() {
-            let Ok((mut sender, conn)) = self.get_transport(&proxy.uri).await else {
+            let Ok((mut sender, conn)) = self.get_proxy_transport(&proxy).await else {
                 continue;
             };
 
@@ -327,7 +323,7 @@ impl ProxyHttp {
                     error!(
                         "[#{}] Bad credentials on proxy <{}> [username={}]",
                         self.rid,
-                        proxy.uri,
+                        proxy.addr,
                         proxy.credentials.as_ref().unwrap().username
                     );
                     break;
@@ -353,7 +349,7 @@ impl ProxyHttp {
                     tx.send(()).unwrap();
 
                     // Build a new proxy connection
-                    let t = self.get_transport(&proxy.uri).await?;
+                    let t = self.get_proxy_transport(&proxy).await?;
                     sender = t.0;
                     let id = self.rid;
 

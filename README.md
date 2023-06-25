@@ -4,7 +4,7 @@
 ![GitHub tag](https://img.shields.io/github/v/tag/jorgeajimenezl/proxyswarm)
 ![AUR version](https://img.shields.io/aur/version/proxyswarm)
 
-Proxyswarm is a lightweight proxy that allows redirect HTTP[S] traffic through a proxy.
+Proxyswarm is a tiny lightweight proxy that allows redirect HTTP[S] traffic through a proxy.
 
 ## Features
 
@@ -29,10 +29,9 @@ Now you can get build from `target/release/proxyswarm` directory.
 
 ## Getting start
 
-For start only run the proxyswarm (optional: run config file test first)
+For start only run the proxyswarm:
 
 ```shell
-proxyswarm -t
 proxyswarm
 ```
 
@@ -47,10 +46,6 @@ systemctl start proxyswarm.service
 ### Superuser?
 
 No, isn't necessary for proxyswarm.
-
-### Is it necessary to use *TLS*?
-
-No, but you can use for apps that don't support HTTP proxies.
 
 ### How download a file with curl using proxy?
 
