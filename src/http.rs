@@ -63,7 +63,7 @@ where
             match conn {
                 Ok(v) => v,
                 Err(e) => {
-                    error!("[#{}] Unable to get underline stream: {}", id, e);
+                    error!("[#{id}] Unable to get underline stream: {e}");
                     return request;
                 }
             }
@@ -76,7 +76,7 @@ where
     let mut io = parts.io;
 
     // Upgrade the request to a tunnel.
-    trace!("[#{}] Upgrading request connection", id);
+    trace!("[#{id}] Upgrading request connection");
 
     match hyper::upgrade::on(&mut request).await {
         Ok(mut upgraded) => {
@@ -84,20 +84,19 @@ where
             let (from, to) = match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("[#{}] Server io error: {}", id, e);
+                    warn!("[#{id}] Server io error: {e}");
                     return request;
                 }
             };
 
             // Print message when done
             debug!(
-                "[#{}] Client wrote {} and received {}",
-                id,
+                "[#{id}] Client wrote {} and received {}",
                 natural_size(from, false),
                 natural_size(to, false)
             );
         }
-        Err(e) => warn!("[#{}] Upgrade error: {}", id, e),
+        Err(e) => warn!("[#{id}] Upgrade error: {e}"),
     }
 
     request
@@ -153,7 +152,7 @@ impl HttpHandler {
         let stream = match TcpStream::connect(proxy.addr).await {
             Ok(v) => v,
             Err(e) => {
-                warn!("[#{}] Proxy is unavailable: {}", self.rid, e);
+                warn!("[#{}] Proxy is unavailable: {e}", self.rid);
                 return Err(e.into());
             }
         };
@@ -222,9 +221,9 @@ impl HttpHandler {
                     .body(Empty::new())
                     .unwrap();
 
-                trace!("[#{}] <Request>: {:?}", self.rid, shallow);
+                trace!("[#{id}] <Request>: {shallow:?}");
                 let res = sender.send_request(shallow).await?;
-                trace!("[#{}] <Proxy Response>: {:?}", self.rid, res);
+                trace!("[#{id}] <Proxy Response>: {res:?}");
 
                 if res.status().is_success() {
                     return Ok(());
@@ -254,18 +253,14 @@ impl HttpHandler {
 
                 if bad_creds {
                     error!(
-                        "[#{}] Bad credentials on proxy <{}> [username={}]",
-                        self.rid,
+                        "[#{id}] Bad credentials on proxy <{}> [username={}]",
                         proxy.addr,
                         proxy.credentials.as_ref().unwrap().username
                     );
                     break;
                 }
 
-                warn!(
-                    "[#{}] Failed to authenticate. [Retry count: {}]",
-                    self.rid, retry_count
-                );
+                warn!("[#{id}] Failed to authenticate. [Retry count: {retry_count}]");
 
                 let closed = match res.headers().get(header::CONNECTION) {
                     Some(conn_header) => conn_header.to_str()?.eq_ignore_ascii_case("close"),
@@ -276,7 +271,7 @@ impl HttpHandler {
                     || matches!(res.version(), Version::HTTP_10)
                     || sender.ready().await.is_err()
                 {
-                    trace!("[#{}] Proxy closes the connection", self.rid);
+                    trace!("[#{id}] Proxy closes the connection");
 
                     // Send token to cancel wait
                     tx.send(()).unwrap();
@@ -286,7 +281,7 @@ impl HttpHandler {
                     sender = t.0;
                     let id = self.rid;
 
-                    debug!("[#{}] Successful connected with the proxy", self.rid);
+                    debug!("[#{id}] Successful connected with the proxy");
 
                     // Re-init all
                     req = wrapper.await?;
@@ -295,7 +290,7 @@ impl HttpHandler {
                     continue;
                 }
 
-                trace!("[#{}] Reusing old connection", self.rid);
+                trace!("[#{id}] Reusing old connection");
             }
 
             req = wrapper.await?;

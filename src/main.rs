@@ -5,12 +5,12 @@ use clap::{
     crate_authors, crate_description, crate_name, crate_version, Arg, ArgAction, Command, ValueHint,
 };
 
+pub mod acl;
 pub mod app;
 pub mod error;
 pub mod http;
 pub mod proxy;
 pub mod utils;
-pub mod acl;
 
 use crate::app::App;
 use log::{error, info, LevelFilter};
@@ -115,7 +115,7 @@ fn main() {
         .unwrap();
 
     if let Err(e) = log4rs::init_config(log_config) {
-        error!("Error initializing logger: {}", e);
+        error!("Error initializing logger: {e}");
         std::process::exit(1);
     }
 
@@ -150,11 +150,11 @@ fn main() {
             .build()
         {
             Ok(v) => {
-                info!("Successful loaded configuration file from {}", path);
+                info!("Successful loaded configuration file from {path}");
                 v
             }
             Err(e) => {
-                error!("Error loading configuration file: {}", e);
+                error!("Error loading configuration file: {e}");
                 std::process::exit(1);
             }
         }
@@ -164,7 +164,7 @@ fn main() {
     let app = match App::from_config(config) {
         Ok(v) => v,
         Err(e) => {
-            error!("{}", e);
+            error!("{e}");
             std::process::exit(1);
         }
     };
@@ -175,6 +175,6 @@ fn main() {
 #[tokio::main]
 async fn do_work(app: App) {
     if let Err(e) = app.run().await {
-        error!("{}", e);
+        error!("{e}");
     }
 }

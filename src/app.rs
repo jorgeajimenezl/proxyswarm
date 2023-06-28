@@ -187,8 +187,8 @@ impl App {
         id: u32,
         mut req: Request<Incoming>,
     ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
-        debug!("[#{}] Requested: {}", id, req.uri());
-        trace!("[#{}] Request struct: {:?}", id, req);
+        debug!("[#{id}] Requested: {}", req.uri());
+        trace!("[#{id}] Request struct: {req:?}");
 
         if let Some(host) = req.uri().host() {
             if context.acl.match_hostname(host) == Rule::Deny {
@@ -221,7 +221,7 @@ impl App {
                 .unwrap());
         }
 
-        debug!("[#{}] Connection processed successful", id);
+        debug!("[#{id}] Connection processed successful");
         Ok(Response::builder().body(empty()).unwrap())
     }
 
@@ -230,10 +230,7 @@ impl App {
         let count = Arc::new(AtomicU32::new(0));
 
         let tcp_listener = TcpListener::bind(addr).await?;
-        info!(
-            "Proxy listening at http://{}. Press Ctrl+C to stop it",
-            addr
-        );
+        info!("Proxy listening at http://{addr}. Press Ctrl+C to stop it",);
 
         let (tx, mut rx) = oneshot::channel();
 
@@ -245,14 +242,14 @@ impl App {
                         let (stream, remote_addr) = match conn {
                             Ok(v) => v,
                             Err(e) => {
-                                error!("Unable to accept incomming TCP connection: {}", e);
+                                error!("Unable to accept incomming TCP connection: {e}");
                                 return;
                             }
                         };
 
                         // Get connections count
                         let id = count.fetch_add(1, Ordering::SeqCst);
-                        debug!("[#{}] Incoming connection: <{}>", id, remote_addr);
+                        debug!("[#{id}] Incoming connection: <{remote_addr}>");
 
                         let context = context.clone();
                         let proxy =
@@ -265,7 +262,7 @@ impl App {
                                     .serve_connection(stream, proxy)
                                     .with_upgrades()
                                     .await {
-                                error!("Server error: {}", e);
+                                error!("Server error: {e}");
                             }
                         });
                     }
