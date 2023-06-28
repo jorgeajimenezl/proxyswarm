@@ -49,13 +49,13 @@ pub async fn redirect_http(
     let host = req.uri().host().ok_or("Uri has no host")?;
     let port = req.uri().port_u16().unwrap_or(80);
 
-    let address = format!("{}:{}", host, port);
+    let address = format!("{port}:{host}");
 
     // Open a TCP connection to the remote host
     let stream = match TcpStream::connect(address).await {
         Ok(v) => v,
         Err(e) => {
-            warn!("Unable to connect to {}: {}", req.uri(), e);
+            warn!("Unable to connect to {}: {e}", req.uri());
             return Ok(Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
                 .body(empty())

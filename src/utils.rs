@@ -11,7 +11,7 @@ pub fn natural_size(bytes: u64, binary: bool) -> String {
         BYTES_SUFFIX.0
     };
     if bytes < base {
-        return format!("{} Bytes", bytes);
+        return format!("{bytes} Bytes");
     }
 
     let mut unit = base * base;
