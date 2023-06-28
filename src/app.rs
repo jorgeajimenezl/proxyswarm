@@ -1,11 +1,12 @@
-use super::http::{empty, ProxyHttp};
+use super::http::{DigestState, HttpHandler};
 use super::proxy::{Credentials, Proxy};
+use crate::acl::{Acl, Rule};
 use crate::error::Error;
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::{self, signal, sync::oneshot};
 
-use http_body_util::combinators::BoxBody;
+use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::{
     body::{Bytes, Incoming},
     header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
@@ -15,18 +16,62 @@ use hyper::{
 };
 
 use config::Config;
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
-use std::sync::Mutex;
 use std::{
     convert::Infallible,
     net::SocketAddr,
     str::FromStr,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
+
+macro_rules! box_body {
+    ($t:expr) => {
+        $t.map(|f| f.boxed())
+    };
+}
+
+#[inline]
+pub(crate) fn empty() -> BoxBody<Bytes, hyper::Error> {
+    Empty::<Bytes>::new()
+        .map_err(|never| match never {})
+        .boxed()
+}
+
+pub async fn redirect_http(
+    req: Request<Incoming>,
+) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Error> {
+    debug!("Request forwarded directly to original destination");
+
+    let host = req.uri().host().ok_or("Uri has no host")?;
+    let port = req.uri().port_u16().unwrap_or(80);
+
+    let address = format!("{}:{}", host, port);
+
+    // Open a TCP connection to the remote host
+    let stream = match TcpStream::connect(address).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Unable to connect to {}: {}", req.uri(), e);
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(empty())
+                .unwrap());
+        }
+    };
+
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(stream).await?;
+    tokio::spawn(async move {
+        if let Err(err) = conn.await {
+            println!("Connection failed: {:?}", err);
+        }
+    });
+
+    Ok(box_body!(sender.send_request(box_body!(req)).await?))
+}
 
 #[derive(Clone, Debug)]
 pub enum OperationMode {
@@ -50,10 +95,10 @@ impl FromStr for OperationMode {
 pub struct AppContext {
     pub addr: SocketAddr,
     pub proxies: Vec<Proxy>,
-    pub bypass: Vec<String>,
     pub mode: OperationMode,
+    pub acl: Acl,
 
-    digest_state: Arc<Mutex<crate::http::DigestState>>,
+    digest_state: Arc<Mutex<DigestState>>,
 }
 
 pub struct App {
@@ -63,13 +108,14 @@ pub struct App {
 impl App {
     fn build_appcontext(config: Config) -> Result<AppContext, Error> {
         let mut proxies = Vec::new();
-        let mut bypass = Vec::new();
+        let mut acl = Acl::new(Rule::Allow);
 
         for value in config
             .get_array("general.bypass")
-            .unwrap_or(vec!["127.0.0.1".into()])
+            .unwrap_or(vec!["127.0.0.1/8".into()])
         {
-            bypass.push(value.into_string()?);
+            // bypass.push(value.into_string()?);
+            acl.add(&value.to_string(), Rule::Deny)?;
         }
 
         let mode = config
@@ -125,7 +171,7 @@ impl App {
             addr: listen_addr,
             mode,
             proxies,
-            bypass,
+            acl,
             digest_state: Default::default(),
         })
     }
@@ -144,6 +190,20 @@ impl App {
         debug!("[#{}] Requested: {}", id, req.uri());
         trace!("[#{}] Request struct: {:?}", id, req);
 
+        if let Some(host) = req.uri().host() {
+            if context.acl.match_hostname(host) == Rule::Deny {
+                debug!("[#{id}] Avoided try to connect with {host}");
+                return Ok(redirect_http(req).await.unwrap_or_else(|e| {
+                    error!("Error forwarding request to destination: {e}");
+
+                    Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(empty())
+                        .unwrap()
+                }));
+            }
+        }
+
         // Remove proxy headers
         if matches!(context.mode, OperationMode::Proxy) {
             let headers = req.headers_mut();
@@ -152,25 +212,17 @@ impl App {
         }
 
         // Forward the request
-        let client = ProxyHttp::new(
-            id,
-            context.proxies,
-            context.bypass,
-            Arc::clone(&context.digest_state),
-        );
-        let res = match client.request(req).await {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Error forwarding request to destination: {}", e);
-                return Ok(Response::builder()
-                    .status(StatusCode::BAD_GATEWAY)
-                    .body(empty())
-                    .unwrap());
-            }
-        };
+        let client = HttpHandler::new(id, context.proxies, Arc::clone(&context.digest_state));
+        if let Err(e) = client.request(req).await {
+            error!("Error forwarding request to destination: {e}");
+            return Ok(Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .body(empty())
+                .unwrap());
+        }
 
         debug!("[#{}] Connection processed successful", id);
-        Ok(res)
+        Ok(Response::builder().body(empty()).unwrap())
     }
 
     async fn serve_http(context: AppContext) -> Result<(), Error> {

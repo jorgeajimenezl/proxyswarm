@@ -2,12 +2,12 @@ use super::proxy::{AuthenticationScheme, Proxy};
 use super::utils::natural_size;
 use crate::error::Error;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use http_body_util::{combinators::BoxBody, BodyExt, Empty};
+use http_body_util::Empty;
 use hyper::{
     self,
     body::{Body, Bytes, Incoming},
     client::conn::http1::{self, Connection, SendRequest},
-    header, Method, Request, Response, StatusCode, Uri, Version,
+    header, Method, Request, StatusCode, Uri, Version,
 };
 use log::{debug, error, trace, warn};
 use std::{
@@ -22,37 +22,13 @@ use tokio::{
     sync::oneshot::{self, Receiver},
 };
 
-macro_rules! box_body {
-    ($t:expr) => {
-        $t.map(|f| f.boxed())
-    };
-}
-
-#[inline]
-pub(crate) fn empty() -> BoxBody<Bytes, hyper::Error> {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed()
-}
-
 pub type DigestState = Option<digest_auth::WwwAuthenticateHeader>;
 
 #[derive(Clone)]
-pub struct ProxyHttp {
+pub struct HttpHandler {
     pub(crate) rid: u32,
     pub(crate) proxies: Vec<Proxy>,
-    pub(crate) bypass: Vec<String>,
     pub(crate) digest_state: Arc<Mutex<DigestState>>,
-}
-
-async fn create_stream(uri: &Uri) -> Result<TcpStream, Error> {
-    let host = uri.host().ok_or("Uri has no host")?;
-    let port = uri.port_u16().unwrap_or(80);
-
-    let address = format!("{}:{}", host, port);
-
-    // Open a TCP connection to the remote host
-    Ok(TcpStream::connect(address).await?)
 }
 
 pub fn without_shutdown<T, B>(
@@ -131,17 +107,15 @@ fn host_addr(uri: &Uri) -> Option<String> {
     uri.authority().map(|auth| auth.to_string())
 }
 
-impl ProxyHttp {
+impl HttpHandler {
     pub fn new(
         rid: u32,
         proxies: Vec<Proxy>,
-        bypass: Vec<String>,
         digest_state: Arc<Mutex<Option<digest_auth::WwwAuthenticateHeader>>>,
     ) -> Self {
-        ProxyHttp {
+        HttpHandler {
             rid,
             proxies,
-            bypass,
             digest_state,
         }
     }
@@ -164,36 +138,6 @@ impl ProxyHttp {
     // pub fn proxies(&self) -> &[Proxy] {
     //     return &self.proxies;
     // }
-
-    pub async fn baypass_direct(
-        &self,
-        req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Error> {
-        debug!(
-            "[#{}] Request forwarded directly to original destination",
-            self.rid
-        );
-
-        let stream = match create_stream(req.uri()).await {
-            Ok(v) => v,
-            Err(e) => {
-                warn!("Unable to connect to {}: {}", req.uri(), e);
-                return Ok(Response::builder()
-                    .status(StatusCode::BAD_GATEWAY)
-                    .body(empty())
-                    .unwrap());
-            }
-        };
-
-        let (mut sender, conn) = http1::handshake(stream).await?;
-        tokio::spawn(async move {
-            if let Err(err) = conn.await {
-                println!("Connection failed: {:?}", err);
-            }
-        });
-
-        Ok(box_body!(sender.send_request(box_body!(req)).await?))
-    }
 
     pub async fn get_proxy_transport(
         &self,
@@ -244,18 +188,8 @@ impl ProxyHttp {
         }
     }
 
-    pub async fn request(
-        &self,
-        mut req: Request<Incoming>,
-    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Error> {
+    pub async fn request(&self, mut req: Request<Incoming>) -> Result<(), Error> {
         let uri = req.uri().clone();
-
-        {
-            let host = &uri.host().unwrap_or_default().to_string();
-            if self.bypass.contains(host) {
-                return self.baypass_direct(req).await;
-            }
-        }
 
         for proxy in self.proxies.iter() {
             let Ok((mut sender, conn)) = self.get_proxy_transport(proxy).await else {
@@ -293,14 +227,14 @@ impl ProxyHttp {
                 trace!("[#{}] <Proxy Response>: {:?}", self.rid, res);
 
                 if res.status().is_success() {
-                    return Ok(Response::builder().body(empty()).unwrap());
+                    return Ok(());
                 }
                 if res.status() != StatusCode::PROXY_AUTHENTICATION_REQUIRED {
                     tx.send(()).unwrap();
-                    return Ok(Response::builder()
-                        .status(StatusCode::BAD_GATEWAY)
-                        .body(empty())
-                        .unwrap());
+                    return Err(Error::UnexpectedStatusCode {
+                        code: res.status().as_u16(),
+                        reason: res.status().canonical_reason().map(|x| x.to_string()),
+                    });
                 }
 
                 let bad_creds = if let (AuthenticationScheme::Digest, Some(data)) =

@@ -29,8 +29,17 @@ pub enum Error {
     #[error(transparent)]
     ConfigurationFileError(#[from] config::ConfigError),
 
-    #[error("This proxy need authentication")]
+    #[error("Thes proxy need authentication")]
     AuthenticationRequired,
+
+    #[error("Thes return an unexpected status code: {code}, reason: {reason:?}")]
+    UnexpectedStatusCode {
+        code: u16,
+        reason: Option<String>,
+    },
+
+    #[error("Unable to parse the expression as a subnet or a hostname")]
+    InvalidAclEntry,
 }
 
 impl From<&str> for Error {

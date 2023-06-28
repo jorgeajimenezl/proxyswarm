@@ -10,6 +10,7 @@ pub mod error;
 pub mod http;
 pub mod proxy;
 pub mod utils;
+pub mod acl;
 
 use crate::app::App;
 use log::{error, info, LevelFilter};
