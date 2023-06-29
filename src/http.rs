@@ -1,13 +1,15 @@
-use super::proxy::{AuthenticationScheme, Proxy};
-use super::utils::natural_size;
+use crate::core::{ProxyRequest, ToStream};
 use crate::error::Error;
+use crate::proxy::{AuthenticationScheme, Proxy};
+use crate::utils::natural_size;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::Empty;
 use hyper::{
     self,
-    body::{Body, Bytes, Incoming},
+    body::{Body, Bytes},
     client::conn::http1::{self, Connection, SendRequest},
-    header, Method, Request, StatusCode, Uri, Version,
+    header, Method, Request, StatusCode, Version,
 };
 use log::{debug, error, trace, warn};
 use std::{
@@ -46,14 +48,16 @@ where
     })
 }
 
-async fn tunnel<T, B1, B2>(
+async fn tunnel<T, B1, R, S>(
     id: u32,
     connection: Connection<T, B1>,
-    mut request: Request<B2>,
+    request: ProxyRequest<R, S>,
     cancellation_token: Receiver<()>,
-) -> Request<B2>
+) -> Option<ProxyRequest<R, S>>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    R: ToStream<S> + Send + Unpin + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     B1: Body + 'static,
     <B1 as Body>::Error: Into<Box<(dyn std::error::Error + Send + Sync + 'static)>>,
 {
@@ -64,12 +68,12 @@ where
                 Ok(v) => v,
                 Err(e) => {
                     error!("[#{id}] Unable to get underline stream: {e}");
-                    return request;
+                    return Some(request);
                 }
             }
         }
         _ = cancellation_token => {
-            return request;
+            return Some(request);
         }
     };
 
@@ -78,32 +82,27 @@ where
     // Upgrade the request to a tunnel.
     trace!("[#{id}] Upgrading request connection");
 
-    match hyper::upgrade::on(&mut request).await {
-        Ok(mut upgraded) => {
-            // Proxying data
-            let (from, to) = match tokio::io::copy_bidirectional(&mut upgraded, &mut io).await {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!("[#{id}] Server io error: {e}");
-                    return request;
-                }
-            };
+    let Ok(mut inner) = request.into_stream().await else {
+        error!("[#{id}] Unable to get incomming stream");
+        return None;
+    };
 
-            // Print message when done
-            debug!(
-                "[#{id}] Client wrote {} and received {}",
-                natural_size(from, false),
-                natural_size(to, false)
-            );
+    let (from, to) = match tokio::io::copy_bidirectional(&mut inner, &mut io).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("[#{id}] Server io error: {e}");
+            return None;
         }
-        Err(e) => warn!("[#{id}] Upgrade error: {e}"),
-    }
+    };
 
-    request
-}
+    // Print message when done
+    debug!(
+        "[#{id}] Client wrote {} and received {}",
+        natural_size(from, false),
+        natural_size(to, false)
+    );
 
-fn host_addr(uri: &Uri) -> Option<String> {
-    uri.authority().map(|auth| auth.to_string())
+    None
 }
 
 impl HttpHandler {
@@ -118,25 +117,6 @@ impl HttpHandler {
             digest_state,
         }
     }
-
-    // pub fn from_proxy(proxy: Proxy) -> Self {
-    //     ProxyClient {
-    //         proxies: vec![proxy],
-    //         bypass: Vec::new()
-    //     }
-    // }
-
-    // pub fn add_bypass_uri(&mut self, uri: &str) {
-    //     self.bypass.push(String::from(uri));
-    // }
-
-    // pub fn add_proxy(&mut self, proxy: Proxy) {
-    //     self.proxies.push(proxy);
-    // }
-
-    // pub fn proxies(&self) -> &[Proxy] {
-    //     return &self.proxies;
-    // }
 
     pub async fn get_proxy_transport(
         &self,
@@ -162,18 +142,17 @@ impl HttpHandler {
         Ok((sender, conn))
     }
 
-    pub fn get_auth_response(&self, proxy: &Proxy, uri: &Uri) -> Result<String, Error> {
+    pub fn get_auth_response(&self, proxy: &Proxy, uri: &str) -> Result<String, Error> {
         let Some(credentials) = &proxy.credentials else {
             return Err(Error::AuthenticationRequired);
         };
 
         // If the digest state is present, then we use it
         if let Some(state) = self.digest_state.lock().unwrap().as_mut() {
-            let uri = uri.to_string();
             let context = digest_auth::AuthContext::new_with_method(
                 &credentials.username,
                 &credentials.password,
-                &uri,
+                uri,
                 Option::<&'_ [u8]>::None,
                 digest_auth::HttpMethod::CONNECT,
             );
@@ -187,8 +166,12 @@ impl HttpHandler {
         }
     }
 
-    pub async fn request(&self, mut req: Request<Incoming>) -> Result<(), Error> {
-        let uri = req.uri().clone();
+    pub async fn request<T, S>(&self, mut req: ProxyRequest<T, S>) -> Result<(), Error>
+    where
+        T: ToStream<S> + Send + Unpin + 'static,
+        S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        let dest = req.destination.to_string();
 
         for proxy in self.proxies.iter() {
             let Ok((mut sender, conn)) = self.get_proxy_transport(proxy).await else {
@@ -204,10 +187,10 @@ impl HttpHandler {
             while retry_count > 0 {
                 retry_count -= 1;
                 let shallow = Request::builder()
-                    .uri(&uri)
+                    .uri(&dest)
                     .method(Method::CONNECT)
                     .version(Version::HTTP_11)
-                    .header(header::HOST, host_addr(&uri).unwrap())
+                    .header(header::HOST, &dest)
                     // In order to make a persistent connection
                     .header("Proxy-Connection", "keep-alive")
                     .header(
@@ -216,7 +199,7 @@ impl HttpHandler {
                     )
                     .header(
                         header::PROXY_AUTHORIZATION,
-                        self.get_auth_response(proxy, &uri)?,
+                        self.get_auth_response(proxy, &dest)?,
                     )
                     .body(Empty::new())
                     .unwrap();
@@ -284,7 +267,7 @@ impl HttpHandler {
                     debug!("[#{id}] Successful connected with the proxy");
 
                     // Re-init all
-                    req = wrapper.await?;
+                    req = wrapper.await?.unwrap();
                     (tx, rx) = oneshot::channel();
                     wrapper = tokio::spawn(async move { tunnel(id, t.1, req, rx).await });
                     continue;
@@ -293,7 +276,7 @@ impl HttpHandler {
                 trace!("[#{id}] Reusing old connection");
             }
 
-            req = wrapper.await?;
+            req = wrapper.await?.unwrap();
         }
 
         Err("Unable to proxy".into())
