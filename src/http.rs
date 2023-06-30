@@ -212,7 +212,7 @@ impl HttpHandler {
                     return Ok(());
                 }
                 if res.status() != StatusCode::PROXY_AUTHENTICATION_REQUIRED {
-                    tx.send(()).unwrap();
+                    let _ = tx.send(());
                     return Err(Error::UnexpectedStatusCode {
                         code: res.status().as_u16(),
                         reason: res.status().canonical_reason().map(|x| x.to_string()),
@@ -257,7 +257,7 @@ impl HttpHandler {
                     trace!("[#{id}] Proxy closes the connection");
 
                     // Send token to cancel wait
-                    tx.send(()).unwrap();
+                    let _ = tx.send(());
 
                     // Build a new proxy connection
                     let t = self.get_proxy_transport(proxy).await?;
