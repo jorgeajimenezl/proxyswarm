@@ -37,6 +37,8 @@ jobs:
       with:
         name: proxyswarm-x86_64-${{ matrix.name }}
         path: target/release/proxyswarm${{ matrix.extension }}
+    - name: Rename
+      run: mv target/release/proxyswarm${{ matrix.extension }} target/release/proxyswarm-${{ matrix.platform }}${{ matrix.extension }}
     - name: Publish
       uses: softprops/action-gh-release@v1
       with:

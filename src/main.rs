@@ -76,11 +76,18 @@ fn main() {
                 .help("Address to listen connections"),
         )
         .arg(
-            Arg::new("baypass")
-                .long("baypass")
+            Arg::new("bypass")
+                .long("bypass")
                 .short('a')
                 .action(ArgAction::Append)
                 .help("Avoid proxify the request with these destinations"),
+        )
+        .arg(
+            Arg::new("deny")
+                .long("deny")
+                .short('d')
+                .action(ArgAction::Append)
+                .help("Deny the requests with this destination"),
         )
         .arg(
             Arg::new("file")
@@ -143,9 +150,16 @@ fn main() {
             )
             .unwrap()
             .set_override_option(
-                "general.baypass",
+                "general.bypass",
                 matches
-                    .get_many::<String>("baypass")
+                    .get_many::<String>("bypass")
+                    .map(|v| v.cloned().collect::<Vec<_>>()),
+            )
+            .unwrap()
+            .set_override_option(
+                "general.deny",
+                matches
+                    .get_many::<String>("deny")
                     .map(|v| v.cloned().collect::<Vec<_>>()),
             )
             .unwrap()

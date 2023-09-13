@@ -7,6 +7,7 @@ use crate::error::Error;
 pub enum Rule {
     Allow,
     Deny,
+    Bypass
 }
 
 #[derive(Clone)]

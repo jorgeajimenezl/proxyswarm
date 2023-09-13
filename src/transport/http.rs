@@ -93,16 +93,26 @@ impl HttpServer {
                 .unwrap());
         };
 
-        if context.acl.match_hostname(&host) == Rule::Deny {
-            debug!("[#{id}] Avoided try to connect with {host}");
-            return Ok(redirect_http(req).await.unwrap_or_else(|e| {
-                error!("Error forwarding request to destination: {e}");
+        match context.acl.match_hostname(&host) {
+            Rule::Bypass => {
+                info!("[#{id}] Avoided try to connect with {host}. Forwarding request");
+                return Ok(redirect_http(req).await.unwrap_or_else(|e| {
+                    error!("Error forwarding request to destination: {e}");
 
-                Response::builder()
-                    .status(StatusCode::BAD_GATEWAY)
+                    Response::builder()
+                        .status(StatusCode::BAD_GATEWAY)
+                        .body(empty())
+                        .unwrap()
+                }));
+            }
+            Rule::Deny => {
+                info!("[#{id}] Deny connection to {host}");
+                return Ok(Response::builder()
+                    .status(StatusCode::FORBIDDEN)
                     .body(empty())
-                    .unwrap()
-            }));
+                    .unwrap());
+            }
+            _ => {}
         }
 
         // Remove proxy headers

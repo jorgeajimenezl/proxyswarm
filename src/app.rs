@@ -55,7 +55,13 @@ impl App {
             .get_array("general.bypass")
             .unwrap_or(vec!["127.0.0.1/8".into()])
         {
-            // bypass.push(value.into_string()?);
+            acl.add(&value.to_string(), Rule::Bypass)?;
+        }
+
+        for value in config
+            .get_array("general.deny")
+            .unwrap()
+        {
             acl.add(&value.to_string(), Rule::Deny)?;
         }
 
