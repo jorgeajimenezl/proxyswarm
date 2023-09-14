@@ -146,15 +146,18 @@ impl HttpServer {
 impl Server for HttpServer {
     type StreamType = TcpStream;
 
+    #[inline]
     async fn bind(addr: SocketAddr) -> std::io::Result<Box<Self>> {
         let listener = TcpListener::bind(addr).await?;
         Ok(Box::new(HttpServer { listener }))
     }
 
+    #[inline]
     async fn accept(&self) -> std::io::Result<(Self::StreamType, SocketAddr)> {
         self.listener.accept().await
     }
 
+    #[inline]
     async fn handle_connection(
         context: AppContext,
         id: u32,

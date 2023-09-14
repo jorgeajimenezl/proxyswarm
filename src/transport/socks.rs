@@ -119,15 +119,18 @@ impl SocksServer {
 impl Server for SocksServer {
     type StreamType = IncomingConnection<()>;
 
+    #[inline]
     async fn bind(addr: SocketAddr) -> std::io::Result<Box<Self>> {
         let server = Socks5Server::bind(addr, Arc::new(NoAuth)).await?;
         Ok(Box::new(SocksServer { server }))
     }
 
+    #[inline]
     async fn accept(&self) -> std::io::Result<(Self::StreamType, SocketAddr)> {
         self.server.accept().await
     }
 
+    #[inline]
     async fn handle_connection(
         context: AppContext,
         id: u32,
