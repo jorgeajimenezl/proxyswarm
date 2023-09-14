@@ -17,15 +17,23 @@ jobs:
           - os: ubuntu
             name: linux
             extension: 
-            platform: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
           - os: windows
             name: win32
             extension: ".exe"
-            platform: x86_64-pc-windows-gnu
+            target: x86_64-pc-windows-gnu
           - os: macos
             name: macos
             extension: 
-            platform: x86_64-apple-darwin
+            target: x86_64-apple-darwin
+          - os: ubuntu
+            name: android-arm64
+            extension:
+            target: aarch64-linux-android
+          - os: ubuntu
+            name: android-armv7
+            extension:
+            target: armv7-linux-androideabi
 
     runs-on: ${{ matrix.os }}-latest
     steps:
@@ -38,11 +46,11 @@ jobs:
         name: proxyswarm-x86_64-${{ matrix.name }}
         path: target/release/proxyswarm${{ matrix.extension }}
     - name: Rename
-      run: mv target/release/proxyswarm${{ matrix.extension }} target/release/proxyswarm-${{ matrix.platform }}${{ matrix.extension }}
+      run: mv target/release/proxyswarm${{ matrix.extension }} target/release/proxyswarm-${{ matrix.target }}${{ matrix.extension }}
     - name: Publish
       uses: softprops/action-gh-release@v1
       with:
         draft: false
         prerelease: true
-        files: target/release/proxyswarm-${{ matrix.platform }}${{ matrix.extension }}
+        files: target/release/proxyswarm-${{ matrix.target }}${{ matrix.extension }}
 
