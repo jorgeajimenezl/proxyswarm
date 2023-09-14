@@ -2,8 +2,8 @@ use super::http::DigestState;
 use super::proxy::{Credentials, Proxy};
 use crate::acl::{Acl, Rule};
 use crate::error::Error;
-use crate::transport::http::HttpServer;
 use crate::transport::Server;
+use crate::transport::{http::HttpServer, socks::SocksServer};
 
 use config::Config;
 use log::info;
@@ -14,29 +14,19 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[derive(Clone, Debug)]
-pub enum OperationMode {
+#[derive(Clone, Debug, strum::Display, strum::EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub enum TransportMode {
     Transparent,
-    Proxy,
-}
-
-impl FromStr for OperationMode {
-    type Err = String;
-    fn from_str(x: &str) -> Result<Self, <Self as std::str::FromStr>::Err> {
-        let x = x.to_lowercase();
-        match x.as_ref() {
-            "proxy" => Ok(OperationMode::Proxy),
-            "transparent" => Ok(OperationMode::Transparent),
-            _ => Err(String::from("Proxy mode not available")),
-        }
-    }
+    Http,
+    Socks,
 }
 
 #[derive(Clone)]
 pub struct AppContext {
     pub addr: SocketAddr,
     pub proxies: Vec<Proxy>,
-    pub mode: OperationMode,
+    pub mode: TransportMode,
     pub acl: Acl,
 
     pub digest_state: Arc<Mutex<DigestState>>,
@@ -58,17 +48,16 @@ impl App {
             acl.add(&value.to_string(), Rule::Bypass)?;
         }
 
-        for value in config
-            .get_array("general.deny")
-            .unwrap()
-        {
-            acl.add(&value.to_string(), Rule::Deny)?;
+        if let Ok(deny_values) = config.get_array("general.deny") {
+            for value in deny_values {
+                acl.add(&value.to_string(), Rule::Deny)?;
+            }
         }
 
         let mode = config
             .get_string("general.mode")
-            .unwrap_or(String::from("proxy"))
-            .parse::<OperationMode>()?;
+            .unwrap_or(String::from("http"))
+            .parse::<TransportMode>().map_err(|_| "Proxy mode not available")?;
 
         // Get the proxies
         let proxy = {
@@ -130,12 +119,16 @@ impl App {
     }
 
     pub async fn run(self) -> Result<(), String> {
-        // Separate to avoid add more logic
-        if matches!(self.context.mode, OperationMode::Transparent) {
-            todo!("Wait a little more :(");
-        }
+        let server = match self.context.mode {
+            TransportMode::Http => HttpServer::serve(self.context),
+            TransportMode::Socks => SocksServer::serve(self.context),
+            TransportMode::Transparent => {
+                unimplemented!("Wait a little more :(");
+            }
+        };
 
-        HttpServer::serve(self.context)
+        // wait for server
+        server
             .await
             .map_err(|e| format!("Server Error: {}", e))?;
 

@@ -40,6 +40,9 @@ pub enum Error {
 
     #[error("Unable to parse the expression as a subnet or a hostname")]
     InvalidAclEntry,
+
+    #[error(transparent)]
+    SocksError(#[from] socks5_impl::Error)
 }
 
 impl From<&str> for Error {

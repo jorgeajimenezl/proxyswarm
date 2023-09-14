@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::http::HttpHandler;
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio::{self, signal, sync::oneshot};
+use tokio::{self};
 
 use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::{
@@ -21,15 +21,12 @@ use hyper::{
 use async_trait::async_trait;
 use log::{debug, error, info, trace, warn};
 
-use std::{
-    convert::Infallible,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
-};
+use std::net::SocketAddr;
+use std::{convert::Infallible, sync::Arc};
 
-pub struct HttpServer;
+pub struct HttpServer {
+    listener: TcpListener,
+}
 
 macro_rules! box_body {
     ($t:expr) => {
@@ -95,7 +92,7 @@ impl HttpServer {
 
         match context.acl.match_hostname(&host) {
             Rule::Bypass => {
-                info!("[#{id}] Avoided try to connect with {host}. Forwarding request");
+                info!("[#{id}] Bypassing connection to {host}");
                 return Ok(redirect_http(req).await.unwrap_or_else(|e| {
                     error!("Error forwarding request to destination: {e}");
 
@@ -147,54 +144,28 @@ impl HttpServer {
 
 #[async_trait]
 impl Server for HttpServer {
-    async fn serve(context: AppContext) -> Result<(), Error> {
-        let addr = context.addr;
-        let count = Arc::new(AtomicU32::new(0));
+    type StreamType = TcpStream;
 
-        let tcp_listener = TcpListener::bind(addr).await?;
-        info!("Proxy listening at http://{addr}. Press Ctrl+C to stop it",);
+    async fn bind(addr: SocketAddr) -> std::io::Result<Box<Self>> {
+        let listener = TcpListener::bind(addr).await?;
+        Ok(Box::new(HttpServer { listener }))
+    }
 
-        let (tx, mut rx) = oneshot::channel();
+    async fn accept(&self) -> std::io::Result<(Self::StreamType, SocketAddr)> {
+        self.listener.accept().await
+    }
 
-        // Main loop
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    conn = tcp_listener.accept() => {
-                        let (stream, remote_addr) = match conn {
-                            Ok(v) => v,
-                            Err(e) => {
-                                error!("Unable to accept incomming TCP connection: {e}");
-                                return;
-                            }
-                        };
-
-                        // Get connections count
-                        let id = count.fetch_add(1, Ordering::SeqCst);
-                        debug!("[#{id}] Incoming connection: <{remote_addr}>");
-
-                        let context = context.clone();
-                        let proxy =
-                            service_fn(move |req| Self::handle_http_connection(context.clone(), id, req));
-
-                        tokio::spawn(async move {
-                            if let Err(e) = http1::Builder::new()
-                                    .keep_alive(true)
-                                    .preserve_header_case(true)
-                                    .serve_connection(stream, proxy)
-                                    .with_upgrades()
-                                    .await {
-                                error!("Server error: {e}");
-                            }
-                        });
-                    }
-                    _ = (&mut rx) => { break; }
-                }
-            }
-        });
-
-        signal::ctrl_c().await?;
-        let _ = tx.send(());
-        Ok(())
+    async fn handle_connection(
+        context: AppContext,
+        id: u32,
+        stream: Self::StreamType,
+    ) -> Result<(), Error> {
+        let proxy = service_fn(move |req| Self::handle_http_connection(context.clone(), id, req));
+        Ok(http1::Builder::new()
+            .keep_alive(true)
+            .preserve_header_case(true)
+            .serve_connection(stream, proxy)
+            .with_upgrades()
+            .await?)
     }
 }

@@ -61,9 +61,9 @@ fn main() {
                 .long("mode")
                 .short('m')
                 .action(ArgAction::Set)
-                .value_parser(["proxy", "transparent"])
+                .value_parser(["http", "socks", "transparent"])
                 .ignore_case(true)
-                .default_value("proxy")
+                .default_value("http")
                 .help("Work mode"),
         )
         .arg(
