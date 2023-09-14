@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use hyper::{body::Incoming, Request};
 use std::{
     marker::PhantomData,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -11,67 +11,59 @@ use tokio::{
 
 use crate::error::Error;
 
-#[derive(Hash, Clone, Eq, PartialEq, Debug)]
-pub(crate) enum MaybeNamedHost {
-    Address(IpAddr),
-    Hostname(String),
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Address {
+    SocketAddress(SocketAddr),
+    DomainAddress(String, u16),
 }
 
-impl From<IpAddr> for MaybeNamedHost {
-    fn from(value: IpAddr) -> Self {
-        MaybeNamedHost::Address(value)
+impl Address {
+    pub fn port(&self) -> u16 {
+        match self {
+            Self::SocketAddress(addr) => addr.port(),
+            Self::DomainAddress(_, port) => *port,
+        }
+    }
+
+    pub fn domain(&self) -> String {
+        match self {
+            Self::SocketAddress(addr) => addr.ip().to_string(),
+            Self::DomainAddress(addr, _) => addr.clone(),
+        }
     }
 }
 
-impl From<&str> for MaybeNamedHost {
-    fn from(value: &str) -> Self {
-        MaybeNamedHost::Hostname(value.to_string())
+impl TryFrom<Address> for SocketAddr {
+    type Error = std::io::Error;
+
+    fn try_from(address: Address) -> std::result::Result<Self, Self::Error> {
+        match address {
+            Address::SocketAddress(addr) => Ok(addr),
+            Address::DomainAddress(addr, port) => {
+                if let Ok(addr) = addr.parse::<Ipv4Addr>() {
+                    Ok(SocketAddr::from((addr, port)))
+                } else if let Ok(addr) = addr.parse::<Ipv6Addr>() {
+                    Ok(SocketAddr::from((addr, port)))
+                } else {
+                    let err = format!("domain address {addr} is not supported");
+                    Err(Self::Error::new(std::io::ErrorKind::Unsupported, err))
+                }
+            }
+        }
     }
 }
 
-impl std::fmt::Display for MaybeNamedHost {
+impl From<&SocketAddr> for Address {
+    fn from(addr: &SocketAddr) -> Self {
+        Address::SocketAddress(*addr)
+    }
+}
+
+impl std::fmt::Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MaybeNamedHost::Address(addr) => addr.fmt(f),
-            MaybeNamedHost::Hostname(name) => name.fmt(f),
-        }
-    }
-}
-
-#[derive(Hash, Clone, Eq, PartialEq, Debug)]
-pub struct MaybeNamedSock {
-    pub(crate) host: MaybeNamedHost,
-    pub(crate) port: u16,
-}
-
-impl TryFrom<MaybeNamedSock> for SocketAddr {
-    type Error = Error;
-    fn try_from(value: MaybeNamedSock) -> Result<Self, Self::Error> {
-        let ip = match value.host {
-            MaybeNamedHost::Address(addr) => addr,
-            MaybeNamedHost::Hostname(e) => {
-                return Err(e.into());
-            }
-        };
-        Ok(SocketAddr::new(ip, value.port))
-    }
-}
-
-impl From<SocketAddr> for MaybeNamedSock {
-    fn from(addr: SocketAddr) -> Self {
-        Self {
-            host: MaybeNamedHost::Address(addr.ip()),
-            port: addr.port(),
-        }
-    }
-}
-
-impl std::fmt::Display for MaybeNamedSock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let MaybeNamedHost::Address(IpAddr::V6(addr)) = self.host {
-            write!(f, "[{}]:{}", addr, self.port)
-        } else {
-            write!(f, "{}:{}", self.host, self.port)
+            Address::DomainAddress(hostname, port) => write!(f, "{hostname}:{port}"),
+            Address::SocketAddress(socket_addr) => write!(f, "{socket_addr}"),
         }
     }
 }
@@ -86,7 +78,7 @@ where
     T: ToStream<S>,
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    pub destination: MaybeNamedSock,
+    pub destination: Address,
     pub inner: T,
     pub _phanton: PhantomData<S>,
 }

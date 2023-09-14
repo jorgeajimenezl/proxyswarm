@@ -3,7 +3,7 @@ use super::Server;
 use crate::{
     acl::Rule,
     app::AppContext,
-    core::{MaybeNamedHost, MaybeNamedSock, ProxyRequest},
+    core::{Address as DestinationAddress, ProxyRequest},
     error::Error,
     http::HttpHandler,
 };
@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use log::{debug, error, info, trace};
 
 pub struct SocksServer {
-    server: Socks5Server<()>,
+    listener: Socks5Server<()>,
 }
 
 impl SocksServer {
@@ -95,12 +95,11 @@ impl SocksServer {
             .await?;
 
         let request = ProxyRequest {
-            destination: MaybeNamedSock {
-                host: match &addr {
-                    Address::DomainAddress(domain, _) => MaybeNamedHost::Hostname(domain.clone()),
-                    Address::SocketAddress(sock) => MaybeNamedHost::Address(sock.ip()),
-                },
-                port: addr.port(),
+            destination: match &addr {
+                Address::DomainAddress(domain, port) => {
+                    DestinationAddress::DomainAddress(domain.clone(), *port)
+                }
+                Address::SocketAddress(sock) => DestinationAddress::SocketAddress(sock.clone()),
             },
             inner: TcpStream::from(conn),
             _phanton: std::marker::PhantomData,
@@ -122,12 +121,12 @@ impl Server for SocksServer {
     #[inline]
     async fn bind(addr: SocketAddr) -> std::io::Result<Box<Self>> {
         let server = Socks5Server::bind(addr, Arc::new(NoAuth)).await?;
-        Ok(Box::new(SocksServer { server }))
+        Ok(Box::new(SocksServer { listener: server }))
     }
 
     #[inline]
     async fn accept(&self) -> std::io::Result<(Self::StreamType, SocketAddr)> {
-        self.server.accept().await
+        self.listener.accept().await
     }
 
     #[inline]

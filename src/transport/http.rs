@@ -2,7 +2,7 @@ use super::Server;
 
 use crate::acl::Rule;
 use crate::app::AppContext;
-use crate::core::{MaybeNamedHost, MaybeNamedSock, ProxyRequest};
+use crate::core::{Address, ProxyRequest};
 use crate::error::Error;
 use crate::http::HttpHandler;
 
@@ -121,10 +121,10 @@ impl HttpServer {
         let client = HttpHandler::new(id, context.proxies, Arc::clone(&context.digest_state));
 
         let request = ProxyRequest {
-            destination: MaybeNamedSock {
-                host: MaybeNamedHost::Hostname(host.to_string()),
-                port: req.uri().port_u16().unwrap_or(80),
-            },
+            destination: Address::DomainAddress(
+                host.to_string(),
+                req.uri().port_u16().unwrap_or(80),
+            ),
             inner: req,
             _phanton: std::marker::PhantomData,
         };
