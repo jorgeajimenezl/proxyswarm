@@ -7,12 +7,12 @@ use clap::{
 
 pub mod acl;
 pub mod app;
+pub mod core;
 pub mod error;
 pub mod http;
 pub mod proxy;
-pub mod utils;
-pub mod core;
 pub mod transport;
+pub mod utils;
 
 use crate::app::App;
 use log::{error, info, LevelFilter};

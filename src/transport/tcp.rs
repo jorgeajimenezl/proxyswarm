@@ -2,8 +2,8 @@ use super::Server;
 use crate::{app::AppContext, core::ProxyRequest, error::Error, http::HttpHandler};
 
 use async_trait::async_trait;
-use std::sync::Arc;
 use log::{debug, error};
+use std::sync::Arc;
 use tokio::net::TcpStream;
 
 pub struct TcpServer;

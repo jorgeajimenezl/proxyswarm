@@ -35,7 +35,10 @@ pub trait Server {
         let count = Arc::new(AtomicU32::new(0));
 
         let handler = Self::bind(addr).await?;
-        info!("Proxy listening at [{}] {addr}. Press Ctrl+C to stop it", context.mode);
+        info!(
+            "Proxy listening at [{}] {addr}. Press Ctrl+C to stop it",
+            context.mode
+        );
 
         let (tx, mut rx) = oneshot::channel();
 

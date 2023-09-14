@@ -57,7 +57,8 @@ impl App {
         let mode = config
             .get_string("general.mode")
             .unwrap_or(String::from("http"))
-            .parse::<TransportMode>().map_err(|_| "Proxy mode not available")?;
+            .parse::<TransportMode>()
+            .map_err(|_| "Proxy mode not available")?;
 
         // Get the proxies
         let proxy = {
@@ -128,9 +129,7 @@ impl App {
         };
 
         // wait for server
-        server
-            .await
-            .map_err(|e| format!("Server Error: {}", e))?;
+        server.await.map_err(|e| format!("Server Error: {}", e))?;
 
         info!("Exiting application...");
         Ok(())

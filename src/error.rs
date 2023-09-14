@@ -33,16 +33,13 @@ pub enum Error {
     AuthenticationRequired,
 
     #[error("Thes return an unexpected status code: {code}, reason: {reason:?}")]
-    UnexpectedStatusCode {
-        code: u16,
-        reason: Option<String>,
-    },
+    UnexpectedStatusCode { code: u16, reason: Option<String> },
 
     #[error("Unable to parse the expression as a subnet or a hostname")]
     InvalidAclEntry,
 
     #[error(transparent)]
-    SocksError(#[from] socks5_impl::Error)
+    SocksError(#[from] socks5_impl::Error),
 }
 
 impl From<&str> for Error {
