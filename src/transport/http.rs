@@ -114,7 +114,11 @@ impl HttpServer {
         headers.remove(PROXY_AUTHORIZATION);
 
         // Forward the request
-        let client = HttpHandler::new(id, context.proxies, Arc::clone(&context.digest_state));
+        let client = HttpHandler::new(
+            id,
+            context.proxies[0].clone(),
+            Arc::clone(&context.digest_state),
+        );
         Ok(match client.request_from_http(req).await {
             Ok(res) => {
                 debug!("[#{id}] Connection processed successful");

@@ -89,7 +89,11 @@ impl SocksServer {
         }
 
         // Forward the request
-        let client = HttpHandler::new(id, context.proxies, Arc::clone(&context.digest_state));
+        let client = HttpHandler::new(
+            id,
+            context.proxies[0].clone(),
+            Arc::clone(&context.digest_state),
+        );
         let conn = connect
             .reply(Reply::Succeeded, Address::unspecified())
             .await?;
