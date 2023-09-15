@@ -29,4 +29,3 @@ wildmatch = "2.1.1"
 async-trait = "0.1.73"
 socks5-impl = "0.5.3"
 strum = { version = "0.25.0", features = ["derive"] }
-tokio-util = "0.7.8"
