@@ -95,11 +95,11 @@ impl SocksServer {
             .await?;
 
         let request = ProxyRequest {
-            destination: match &addr {
+            destination: match addr {
                 Address::DomainAddress(domain, port) => {
-                    DestinationAddress::DomainAddress(domain.clone(), *port)
+                    DestinationAddress::DomainAddress(domain, port)
                 }
-                Address::SocketAddress(sock) => DestinationAddress::SocketAddress(sock.clone()),
+                Address::SocketAddress(sock) => DestinationAddress::SocketAddress(sock),
             },
             inner: TcpStream::from(conn),
             _phanton: std::marker::PhantomData,

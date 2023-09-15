@@ -1,15 +1,17 @@
-use crate::core::{ProxyRequest, ToStream};
-use crate::error::Error;
-use crate::proxy::{AuthenticationScheme, Proxy};
-use crate::utils::natural_size;
+use crate::{
+    core::{Address, ProxyRequest, ToStream},
+    error::Error,
+    proxy::{AuthenticationScheme, Proxy},
+    utils::{natural_size, RequestExt, ResponseExt},
+};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use http_body_util::Empty;
+use http_body_util::{combinators::BoxBody, BodyExt, Either, Empty};
 use hyper::{
     self,
-    body::{Body, Bytes},
+    body::{Body, Bytes, Incoming},
     client::conn::http1::{self, Connection, SendRequest},
-    header, Method, Request, StatusCode, Version,
+    header, Method, Request, Response, StatusCode, Version,
 };
 use log::{debug, error, trace, warn};
 use std::{
@@ -21,8 +23,8 @@ use tokio::{
     self,
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
-    sync::oneshot::{self, Receiver},
 };
+use tokio_util::sync::CancellationToken;
 
 pub type DigestState = Option<digest_auth::WwwAuthenticateHeader>;
 
@@ -52,7 +54,7 @@ async fn tunnel<T, B1, R, S>(
     id: u32,
     connection: Connection<T, B1>,
     request: ProxyRequest<R, S>,
-    cancellation_token: Receiver<()>,
+    cancellation_token: CancellationToken,
 ) -> Option<ProxyRequest<R, S>>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -72,7 +74,7 @@ where
                 }
             }
         }
-        _ = cancellation_token => {
+        _ = cancellation_token.cancelled() => {
             return Some(request);
         }
     };
@@ -118,16 +120,15 @@ impl HttpHandler {
         }
     }
 
-    pub async fn get_proxy_transport(
+    pub async fn get_proxy_transport<B>(
         &self,
         proxy: &Proxy,
-    ) -> Result<
-        (
-            SendRequest<Empty<Bytes>>,
-            Connection<TcpStream, Empty<Bytes>>,
-        ),
-        Error,
-    > {
+    ) -> Result<(SendRequest<B>, Connection<TcpStream, B>), Error>
+    where
+        B: Body + 'static,
+        <B as Body>::Data: Send,
+        <B as Body>::Error: Into<Box<(dyn std::error::Error + Send + Sync + 'static)>>,
+    {
         // Try to connect with the proxy
         let stream = match TcpStream::connect(proxy.addr).await {
             Ok(v) => v,
@@ -138,11 +139,15 @@ impl HttpHandler {
         };
 
         let (sender, conn) = http1::handshake(stream).await?;
-
         Ok((sender, conn))
     }
 
-    pub fn get_auth_response(&self, proxy: &Proxy, uri: &str) -> Result<String, Error> {
+    pub fn get_auth_response(
+        &self,
+        proxy: &Proxy,
+        uri: &str,
+        method: digest_auth::HttpMethod,
+    ) -> Result<String, Error> {
         let Some(credentials) = &proxy.credentials else {
             return Err(Error::AuthenticationRequired);
         };
@@ -154,7 +159,7 @@ impl HttpHandler {
                 &credentials.password,
                 uri,
                 Option::<&'_ [u8]>::None,
-                digest_auth::HttpMethod::CONNECT,
+                method,
             );
 
             let response = state.respond(&context)?;
@@ -174,13 +179,16 @@ impl HttpHandler {
         let dest = req.destination.to_string();
 
         for proxy in self.proxies.iter() {
-            let Ok((mut sender, conn)) = self.get_proxy_transport(proxy).await else {
+            let Ok((mut sender, mut conn)) = self.get_proxy_transport::<Empty<Bytes>>(proxy).await else {
                 continue;
             };
 
             let id = self.rid;
-            let (mut tx, mut rx) = oneshot::channel();
-            let mut wrapper = tokio::spawn(async move { tunnel(id, conn, req, rx).await });
+            let token = CancellationToken::new();
+            let mut wrapper = {
+                let child_token = token.clone();
+                tokio::spawn(async move { tunnel(id, conn, req, child_token).await })
+            };
             let mut retry_count = 3;
             let mut before = false;
 
@@ -199,7 +207,7 @@ impl HttpHandler {
                     )
                     .header(
                         header::PROXY_AUTHORIZATION,
-                        self.get_auth_response(proxy, &dest)?,
+                        self.get_auth_response(proxy, &dest, digest_auth::HttpMethod::CONNECT)?,
                     )
                     .body(Empty::new())
                     .unwrap();
@@ -212,7 +220,7 @@ impl HttpHandler {
                     return Ok(());
                 }
                 if res.status() != StatusCode::PROXY_AUTHENTICATION_REQUIRED {
-                    let _ = tx.send(());
+                    token.cancel();
                     return Err(Error::UnexpectedStatusCode {
                         code: res.status().as_u16(),
                         reason: res.status().canonical_reason().map(|x| x.to_string()),
@@ -224,10 +232,8 @@ impl HttpHandler {
                 {
                     let state = digest_auth::parse(data)?;
                     let r = !state.stale;
-
                     // Update the actual digest state
                     self.digest_state.lock().unwrap().replace(state);
-
                     r && before
                 } else {
                     true
@@ -245,31 +251,21 @@ impl HttpHandler {
 
                 warn!("[#{id}] Failed to authenticate. [Retry count: {retry_count}]");
 
-                let closed = match res.headers().get(header::CONNECTION) {
-                    Some(conn_header) => conn_header.to_str()?.eq_ignore_ascii_case("close"),
-                    None => false,
-                };
-
-                if closed
-                    || matches!(res.version(), Version::HTTP_10)
-                    || sender.ready().await.is_err()
-                {
+                if res.is_closed() || sender.ready().await.is_err() {
                     trace!("[#{id}] Proxy closes the connection");
 
-                    // Send token to cancel wait
-                    let _ = tx.send(());
-
-                    // Build a new proxy connection
-                    let t = self.get_proxy_transport(proxy).await?;
-                    sender = t.0;
+                    token.cancel();
+                    (sender, conn) = self.get_proxy_transport(proxy).await?;
                     let id = self.rid;
-
                     debug!("[#{id}] Successful connected with the proxy");
 
                     // Re-init all
                     req = wrapper.await?.unwrap();
-                    (tx, rx) = oneshot::channel();
-                    wrapper = tokio::spawn(async move { tunnel(id, t.1, req, rx).await });
+                    let token = CancellationToken::new();
+                    wrapper = {
+                        let child_token = token.clone();
+                        tokio::spawn(async move { tunnel(id, conn, req, child_token).await })
+                    };
                     continue;
                 }
 
@@ -277,6 +273,133 @@ impl HttpHandler {
             }
 
             req = wrapper.await?.unwrap();
+        }
+
+        Err("Unable to proxy".into())
+    }
+
+    pub async fn request_from_http(
+        &self,
+        req: Request<Incoming>,
+    ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Error> {
+        if req.method() == Method::CONNECT {
+            let host = req
+                .uri()
+                .host()
+                .map(|x| x.to_string())
+                .ok_or("Invalid request, missing host part in the uri")?;
+
+            let request = ProxyRequest {
+                destination: Address::DomainAddress(host, req.uri().port_u16().unwrap_or(80)),
+                inner: req,
+                _phanton: std::marker::PhantomData,
+            };
+
+            let _ = self.request(request).await?;
+            let empty = Empty::<Bytes>::new()
+                .map_err(|never| match never {})
+                .boxed();
+            return Ok(Response::builder().body(empty).unwrap());
+        }
+
+        for proxy in self.proxies.iter() {
+            let Ok((mut sender, conn)) = self.get_proxy_transport::<Either<Incoming, Empty<Bytes>>>(proxy).await else {
+                continue;
+            };
+
+            let id = self.rid;
+            let mut retry_count = 3;
+            let mut before = false;
+
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+
+            let path = req.uri().path().to_string();
+            let method = req.method().to_string().into();
+
+            while retry_count > 0 {
+                retry_count -= 1;
+                let shallow = req
+                    .builder_from()
+                    .method(Method::HEAD)
+                    .header("Proxy-Connection", "keep-alive")
+                    .header(
+                        header::PROXY_AUTHORIZATION,
+                        self.get_auth_response(proxy, &path, digest_auth::HttpMethod::HEAD)?,
+                    )
+                    .body(Either::Right(Empty::new()))
+                    .unwrap();
+
+                trace!("[#{id}] <Request>: {shallow:?}");
+                let res = sender.send_request(shallow).await?;
+                trace!("[#{id}] <Proxy Response>: {res:?}");
+
+                if res.status() != StatusCode::PROXY_AUTHENTICATION_REQUIRED {
+                    if res.is_closed() || sender.ready().await.is_err() {
+                        trace!("[#{id}] Proxy closes the connection");
+                        let Ok(t) = self.get_proxy_transport(proxy).await else {
+                            break;
+                        };
+                        sender = t.0;
+
+                        debug!("[#{id}] Connected to proxy and ready to send request");
+                        tokio::spawn(async move {
+                            let _ = t.1.await;
+                        });
+                    }
+
+                    let mut req = req.map(Either::Left);
+                    req.headers_mut().insert(
+                        header::PROXY_AUTHORIZATION,
+                        self.get_auth_response(proxy, &path, method)?
+                            .parse()
+                            .unwrap(),
+                    );
+                    let res = sender.send_request(req).await?;
+                    return Ok(res.map(|f| f.boxed()));
+                }
+
+                let bad_creds = if let (AuthenticationScheme::Digest, Some(data)) =
+                    Proxy::get_auth_info(&res)?
+                {
+                    let state = digest_auth::parse(data)?;
+                    let r = !state.stale;
+                    // Update the actual digest state
+                    self.digest_state.lock().unwrap().replace(state);
+                    r && before
+                } else {
+                    true
+                };
+                before = true;
+
+                if bad_creds {
+                    error!(
+                        "[#{id}] Bad credentials on proxy <{}> [username={}]",
+                        proxy.addr,
+                        proxy.credentials.as_ref().unwrap().username
+                    );
+                    break;
+                }
+
+                warn!("[#{id}] Failed to authenticate. [Retry count: {retry_count}]");
+
+                if res.is_closed() || sender.ready().await.is_err() {
+                    trace!("[#{id}] Proxy closes the connection");
+                    // Build a new proxy connection
+                    let t = self.get_proxy_transport(proxy).await?;
+                    sender = t.0;
+                    debug!("[#{id}] Successful connected with the proxy");
+
+                    // Re-init all
+                    tokio::spawn(async move {
+                        let _ = t.1.await;
+                    });
+                    continue;
+                }
+
+                trace!("[#{id}] Reusing old connection");
+            }
         }
 
         Err("Unable to proxy".into())

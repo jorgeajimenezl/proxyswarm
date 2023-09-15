@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use hyper::{body::Incoming, Request};
 use std::{
     marker::PhantomData,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -30,6 +30,15 @@ impl Address {
             Self::SocketAddress(addr) => addr.ip().to_string(),
             Self::DomainAddress(addr, _) => addr.clone(),
         }
+    }
+
+    pub fn to_socket(self) -> std::io::Result<Self> {
+        Ok(match self {
+            Address::SocketAddress(sock) => Address::SocketAddress(sock),
+            Address::DomainAddress(domain, port) => {
+                Address::SocketAddress((domain, port).to_socket_addrs()?.next().unwrap())
+            }
+        })
     }
 }
 

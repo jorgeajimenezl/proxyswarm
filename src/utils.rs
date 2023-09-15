@@ -24,3 +24,43 @@ pub fn natural_size(bytes: u64, binary: bool) -> String {
 
     format!("{:.2} {}", (base * bytes) as f64 / unit as f64, suffix[7])
 }
+
+use http::{header, request::Builder, Request, Response, Version};
+use hyper::body::Body;
+
+pub trait RequestExt {
+    fn builder_from(&self) -> Builder;
+}
+
+pub trait ResponseExt {
+    fn is_closed(&self) -> bool;
+}
+
+impl<T> RequestExt for Request<T> {
+    fn builder_from(&self) -> Builder {
+        let mut builder = Request::builder()
+            .uri(self.uri())
+            .method(self.method())
+            .version(self.version());
+
+        let headers = builder.headers_mut().unwrap();
+        headers.extend(self.headers().clone());
+
+        builder
+    }
+}
+
+impl<T: Body> ResponseExt for Response<T> {
+    fn is_closed(&self) -> bool {
+        let closed = match self.headers().get(header::CONNECTION) {
+            Some(header) => header
+                .to_str()
+                .map(|x| x.eq_ignore_ascii_case("close"))
+                .unwrap_or(false),
+            None => false,
+        };
+        closed
+            || matches!(self.version(), Version::HTTP_10 | Version::HTTP_09)
+            || self.is_end_stream()
+    }
+}

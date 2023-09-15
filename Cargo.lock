@@ -816,6 +816,7 @@ dependencies = [
  "strum",
  "thiserror",
  "tokio",
+ "tokio-util",
  "wildmatch",
 ]
 

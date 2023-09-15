@@ -1,10 +1,6 @@
 use super::Server;
 
-use crate::acl::Rule;
-use crate::app::AppContext;
-use crate::core::{Address, ProxyRequest};
-use crate::error::Error;
-use crate::http::HttpHandler;
+use crate::{acl::Rule, app::AppContext, error::Error, http::HttpHandler};
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::{self};
@@ -119,26 +115,19 @@ impl HttpServer {
 
         // Forward the request
         let client = HttpHandler::new(id, context.proxies, Arc::clone(&context.digest_state));
-
-        let request = ProxyRequest {
-            destination: Address::DomainAddress(
-                host.to_string(),
-                req.uri().port_u16().unwrap_or(80),
-            ),
-            inner: req,
-            _phanton: std::marker::PhantomData,
-        };
-
-        if let Err(e) = client.request(request).await {
-            error!("Error forwarding request to destination: {e}");
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(empty())
-                .unwrap());
-        }
-
-        debug!("[#{id}] Connection processed successful");
-        Ok(Response::builder().body(empty()).unwrap())
+        Ok(match client.request_from_http(req).await {
+            Ok(res) => {
+                debug!("[#{id}] Connection processed successful");
+                res
+            }
+            Err(e) => {
+                error!("Error forwarding request to destination: {e}");
+                Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(empty())
+                    .unwrap()
+            }
+        })
     }
 }
 
