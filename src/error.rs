@@ -29,8 +29,11 @@ pub enum Error {
     #[error(transparent)]
     ConfigurationFileError(#[from] config::ConfigError),
 
-    #[error("Thes proxy need authentication")]
+    #[error("Proxy need authentication")]
     AuthenticationRequired,
+
+    #[error("Wrong credentials")]
+    WrongCredentials,
 
     #[error("Thes return an unexpected status code: {code}, reason: {reason:?}")]
     UnexpectedStatusCode { code: u16, reason: Option<String> },

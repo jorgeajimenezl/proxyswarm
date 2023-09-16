@@ -1,6 +1,11 @@
 use super::Server;
-
-use crate::{acl::Rule, app::AppContext, error::Error, http::HttpHandler};
+use crate::{
+    acl::Rule,
+    app::AppContext,
+    core::{Address, ProxyRequest},
+    error::Error,
+    http::HttpHandler,
+};
 
 use tokio::net::{TcpListener, TcpStream};
 use tokio::{self};
@@ -8,7 +13,7 @@ use tokio::{self};
 use http_body_util::{combinators::BoxBody, BodyExt, Empty};
 use hyper::{
     body::{Bytes, Incoming},
-    header::{PROXY_AUTHENTICATE, PROXY_AUTHORIZATION},
+    header,
     server::conn::http1,
     service::service_fn,
     Request, Response, StatusCode,
@@ -81,7 +86,7 @@ impl HttpServer {
         let Some(host) = req.uri().host().map(|x| x.to_string()) else {
             error!("[#{id}] Invalid request, missing host part in the uri");
             return Ok(Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
+                .status(StatusCode::BAD_REQUEST)
                 .body(empty())
                 .unwrap());
         };
@@ -110,8 +115,8 @@ impl HttpServer {
 
         // Remove proxy headers
         let headers = req.headers_mut();
-        headers.remove(PROXY_AUTHENTICATE);
-        headers.remove(PROXY_AUTHORIZATION);
+        headers.remove(header::PROXY_AUTHENTICATE);
+        headers.remove(header::PROXY_AUTHORIZATION);
 
         // Forward the request
         let client = HttpHandler::new(
@@ -119,13 +124,20 @@ impl HttpServer {
             context.proxies[0].clone(),
             Arc::clone(&context.digest_state),
         );
-        Ok(match client.request_from_http(req).await {
+
+        let req = ProxyRequest::from_request(
+            Address::DomainAddress(host, req.uri().port_u16().unwrap_or(80)),
+            req,
+        );
+
+        Ok(match client.request(req).await {
             Ok(res) => {
                 debug!("[#{id}] Connection processed successful");
-                res
+                res.map(|f| f.map(|f| f.boxed()))
+                    .unwrap_or_else(|| Response::new(empty()))
             }
             Err(e) => {
-                error!("Error forwarding request to destination: {e}");
+                error!("Error: {e}");
                 Response::builder()
                     .status(StatusCode::BAD_GATEWAY)
                     .body(empty())

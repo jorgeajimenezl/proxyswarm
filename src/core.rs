@@ -1,15 +1,6 @@
-use async_trait::async_trait;
-use hyper::{body::Incoming, Request};
-use std::{
-    marker::PhantomData,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
-};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::TcpStream,
-};
-
 use crate::error::Error;
+use hyper::{body::Incoming, Request};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Address {
@@ -77,41 +68,50 @@ impl std::fmt::Display for Address {
     }
 }
 
-#[async_trait]
-pub trait ToStream<S: AsyncRead + AsyncWrite + Send + Unpin + 'static> {
-    async fn into_stream(self) -> Result<S, Error>;
-}
-
-pub struct ProxyRequest<T, S>
-where
-    T: ToStream<S>,
-    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-{
+pub struct ProxyRequest {
     pub destination: Address,
-    pub inner: T,
-    pub _phanton: PhantomData<S>,
+    pub(crate) inner: ProxyTransport,
 }
 
-impl<T, S> ProxyRequest<T, S>
-where
-    T: ToStream<S>,
-    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-{
-    pub async fn into_stream(self) -> Result<S, Error> {
-        self.inner.into_stream().await
+mod sealed {
+    use tokio::io::{AsyncRead, AsyncWrite};
+
+    pub trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+    impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncStream for T {}
+}
+
+pub(crate) enum ProxyTransport {
+    Request(Request<Incoming>),
+    Stream(Box<(dyn sealed::AsyncStream)>),
+}
+
+impl ProxyRequest {
+    pub fn from_stream<T: sealed::AsyncStream>(destination: Address, io: T) -> Self {
+        Self {
+            destination,
+            inner: ProxyTransport::Stream(Box::new(io)),
+        }
     }
-}
 
-#[async_trait]
-impl ToStream<hyper::upgrade::Upgraded> for Request<Incoming> {
-    async fn into_stream(self) -> Result<hyper::upgrade::Upgraded, Error> {
-        Ok(hyper::upgrade::on(self).await?)
+    pub fn from_request(destination: Address, request: Request<Incoming>) -> Self {
+        Self {
+            destination,
+            inner: ProxyTransport::Request(request),
+        }
     }
-}
 
-#[async_trait]
-impl ToStream<TcpStream> for TcpStream {
-    async fn into_stream(self) -> Result<TcpStream, Error> {
-        Ok(self)
+    pub async fn into_stream(self) -> Result<Box<(dyn sealed::AsyncStream)>, Error> {
+        Ok(match self.inner {
+            ProxyTransport::Stream(stream) => stream,
+            ProxyTransport::Request(req) => Box::new(hyper::upgrade::on(req).await?),
+        })
+    }
+
+    #[inline]
+    pub fn use_tunnel(&self) -> bool {
+        match &self.inner {
+            ProxyTransport::Request(req) => req.method() == hyper::Method::CONNECT,
+            ProxyTransport::Stream(..) => true,
+        }
     }
 }

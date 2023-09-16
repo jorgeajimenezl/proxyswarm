@@ -98,16 +98,15 @@ impl SocksServer {
             .reply(Reply::Succeeded, Address::unspecified())
             .await?;
 
-        let request = ProxyRequest {
-            destination: match addr {
+        let request = ProxyRequest::from_stream(
+            match addr {
                 Address::DomainAddress(domain, port) => {
                     DestinationAddress::DomainAddress(domain, port)
                 }
                 Address::SocketAddress(sock) => DestinationAddress::SocketAddress(sock),
             },
-            inner: TcpStream::from(conn),
-            _phanton: std::marker::PhantomData,
-        };
+            TcpStream::from(conn),
+        );
 
         if let Err(e) = client.request(request).await {
             error!("Error forwarding request to destination: {e}");
