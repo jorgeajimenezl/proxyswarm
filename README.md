@@ -8,9 +8,9 @@ Proxyswarm is a tiny lightweight proxy that allows redirect HTTP[S] traffic thro
 
 ## Features
 
-- **High performace** (built using `tokio.rs`)
-- **Multiple connections** at same time
-- **HTTP[S] Proxy**
+- High performace (built using `tokio.rs`)
+- Multiple connections at same time
+- HTTP, SOCKS5 support
 
 ## Authentication schemes supported
 
@@ -57,4 +57,4 @@ curl --proxy [http|https|sock]://host:port --proxy-user user:pass --proxy-anyaut
 
 ## Author
 
-This program was deverloped by Jorge Alejandro Jiménez Luna <<jorgeajimenezl17@gmail.com>>
+This program was developed by Jorge Alejandro Jiménez Luna <<jorgeajimenezl17@gmail.com>>

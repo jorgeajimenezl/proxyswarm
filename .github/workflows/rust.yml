@@ -39,7 +39,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build
-      run: cargo build --verbose --release
+      run: cargo build --verbose --release --target ${{ matrix.target }}
     - name: Archive binary file
       uses: actions/upload-artifact@v3
       with:
