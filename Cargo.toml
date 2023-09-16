@@ -1,6 +1,6 @@
 [package]
 name = "proxyswarm"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Jorge Alejandro Jimenez Luna <jorgeajimenezl17@gmail.com>"]
 edition = "2021"
 description = "Proxyswarm is a tiny lightweight proxy that allows redirect HTTP(S) traffic through a proxy."
